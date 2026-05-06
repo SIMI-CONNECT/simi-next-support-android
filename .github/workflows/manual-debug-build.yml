@@ -148,24 +148,24 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+          VCPKG_DEFAULT_TRIPLET: arm64-android
         run: |
           set -euo pipefail
-          # Install for arm64-android and x64-android triplets.
-          # armeabi-v7a skipped for debug (armv7 ASM issues with libvpx).
+          VCPKG="${VCPKG_ROOT}/vcpkg"
+          # arm64-android and x64-android are community triplets included in vcpkg.
           for triplet in arm64-android x64-android; do
             echo "==> Installing vcpkg packages for ${triplet}"
-            "${VCPKG_ROOT}/vcpkg" install \
-              --triplet="${triplet}" \
-              --x-install-root="${GITHUB_WORKSPACE}/vcpkg_installed" \
-              --overlay-triplets="${VCPKG_ROOT}/triplets/community" \
-              opus libvpx aom libyuv libjpeg-turbo 2>&1 | tail -10
+            "${VCPKG}" install \
+              "opus:${triplet}" \
+              "libvpx:${triplet}" \
+              "aom:${triplet}" \
+              "libyuv:${triplet}" \
+              "libjpeg-turbo:${triplet}" \
+              --no-print-usage 2>&1 | tail -15
           done
 
       - name: Export VCPKG_ROOT for Cargo builds
-        run: |
-          echo "VCPKG_ROOT=${{ env.VCPKG_ROOT }}" >> "$GITHUB_ENV"
-          # Point vcpkg install root to our workspace-local installed dir
-          echo "VCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed" >> "$GITHUB_ENV"
+        run: echo "VCPKG_ROOT=${{ env.VCPKG_ROOT }}" >> "$GITHUB_ENV"
 
       - name: flutter pub get
         working-directory: flutter
