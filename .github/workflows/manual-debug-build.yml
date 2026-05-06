@@ -123,7 +123,8 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends nasm cmake ninja-build pkg-config unzip curl
+          sudo apt-get install -y --no-install-recommends nasm cmake ninja-build pkg-config unzip curl \
+            libc6-dev gcc-multilib
 
       # magnum-opus needs opus headers for each Android ABI.
       # Build opus from source with the NDK toolchain and install into a
@@ -162,7 +163,8 @@ jobs:
           for cargo_target in "${!TARGET_MAP[@]}"; do
             IFS=: read -r ndk_triple abi vcpkg_triplet <<< "${TARGET_MAP[$cargo_target]}"
             echo "==> Building opus for ${cargo_target} (abi=${abi})"
-            install_dir="${OPUS_PREFIX}/${vcpkg_triplet}"
+            # VCPKG layout: $VCPKG_ROOT/installed/<triplet>/{include,lib}
+            install_dir="${OPUS_PREFIX}/installed/${vcpkg_triplet}"
             mkdir -p "${install_dir}"
             pushd /tmp/opus-src >/dev/null
             CC="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
