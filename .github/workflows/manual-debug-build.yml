@@ -66,6 +66,52 @@ jobs:
             (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
           fi
 
+      # Patch libs/hbb_common/src/config.rs so RENDEZVOUS_SERVERS, RS_PUB_KEY,
+      # and API_SERVER are baked in at compile time via option_env!().
+      # This runs after the clone step so it survives a cache hit on hbb_common.
+      - name: Patch hbb_common config.rs (bake server defaults via option_env)
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys, textwrap
+
+          cfg = pathlib.Path("libs/hbb_common/src/config.rs")
+          src = cfg.read_text()
+
+          # Already patched? (idempotent)
+          if 'option_env!("RENDEZVOUS_SERVER")' in src:
+              print("config.rs already patched, skipping.")
+              sys.exit(0)
+
+          OLD = (
+              'pub const RENDEZVOUS_SERVERS: &[&str] = &["rs-ny.rustdesk.com"];\n'
+              'pub const RS_PUB_KEY: &str = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";'
+          )
+          if OLD not in src:
+              print("ERROR: expected RENDEZVOUS_SERVERS block not found", file=sys.stderr)
+              sys.exit(1)
+
+          NEW = (
+              '// Baked in at compile time; override via RENDEZVOUS_SERVER / RS_PUB_KEY /\n'
+              '// API_SERVER env vars passed to cargo.  const match is used instead of\n'
+              '// option_env!().unwrap_or() which is not yet a stable const fn.\n'
+              'pub const RENDEZVOUS_SERVERS: &[&str] = &[match option_env!("RENDEZVOUS_SERVER") {\n'
+              '    Some(v) => v,\n'
+              '    None => "rs-ny.rustdesk.com",\n'
+              '}];\n'
+              'pub const RS_PUB_KEY: &str = match option_env!("RS_PUB_KEY") {\n'
+              '    Some(v) => v,\n'
+              '    None => "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=",\n'
+              '};\n'
+              'pub const API_SERVER: &str = match option_env!("API_SERVER") {\n'
+              '    Some(v) => v,\n'
+              '    None => "",\n'
+              '};'
+          )
+
+          cfg.write_text(src.replace(OLD, NEW))
+          print("config.rs patched successfully.")
+          PY
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -210,6 +256,13 @@ jobs:
         shell: bash
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
+          # Propagate fleet server config to cargo so option_env!() in
+          # libs/hbb_common/src/config.rs bakes the values into the .so at
+          # compile time.  RENDEZVOUS_SERVER and API_SERVER come from the
+          # job-level env block; RS_PUB_KEY comes from the workflow input.
+          RENDEZVOUS_SERVER: ${{ env.RENDEZVOUS_SERVER }}
+          RS_PUB_KEY: ${{ github.event.inputs.rs_pub_key }}
+          API_SERVER: ${{ env.API_SERVER }}
         run: |
           set -euo pipefail
           # armeabi-v7a excluded until libvpx armv7 NDK cross-compile is fixed.
