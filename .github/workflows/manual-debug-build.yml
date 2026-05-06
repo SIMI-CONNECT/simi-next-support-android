@@ -128,40 +128,37 @@ jobs:
             nasm yasm cmake ninja-build pkg-config unzip curl zip \
             libc6-dev gcc-multilib
 
-      # Install vcpkg and use the repo's vcpkg.json to build native deps
-      # (opus, libvpx, aom, libyuv) for Android ABIs via the NDK toolchain.
-      # We cache the vcpkg installed tree keyed by vcpkg.json + vcpkg commit.
-      - name: Set up vcpkg
+      # Install vcpkg outside the repo checkout to avoid triggering manifest mode.
+      # Upstream RustDesk places vcpkg at /opt/artifacts/vcpkg; we do the same.
+      - name: Set up vcpkg (outside workspace to avoid manifest mode)
         uses: lukka/run-vcpkg@v11
         with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
           vcpkgGitCommitId: "120deac3062162151622ca4860575a33844ba10b"
 
       - name: Cache vcpkg Android packages
         id: vcpkg-cache
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/vcpkg_installed
+          path: /opt/artifacts/vcpkg/installed
           key: vcpkg-android-arm64-x64-${{ hashFiles('vcpkg.json') }}-120deac306
 
       - name: Build vcpkg deps for Android (arm64 + x86_64)
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
-          VCPKG_DEFAULT_TRIPLET: arm64-android
+          VCPKG_ROOT: /opt/artifacts/vcpkg
+          ANDROID_NDK: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euo pipefail
-          VCPKG="${VCPKG_ROOT}/vcpkg"
-          # arm64-android and x64-android are community triplets included in vcpkg.
-          for triplet in arm64-android x64-android; do
-            echo "==> Installing vcpkg packages for ${triplet}"
-            "${VCPKG}" install \
-              --triplet="${triplet}" \
-              opus libvpx aom libyuv libjpeg-turbo 2>&1 | tail -15
-          done
+          # Use the upstream-compatible build_android_deps.sh which calls:
+          #   vcpkg install --triplet <triplet> --x-install-root="$VCPKG_ROOT/installed"
+          chmod +x flutter/build_android_deps.sh
+          flutter/build_android_deps.sh arm64-v8a
+          flutter/build_android_deps.sh x86_64
 
       - name: Export VCPKG_ROOT for Cargo builds
-        run: echo "VCPKG_ROOT=${{ env.VCPKG_ROOT }}" >> "$GITHUB_ENV"
+        run: echo "VCPKG_ROOT=/opt/artifacts/vcpkg" >> "$GITHUB_ENV"
 
       - name: flutter pub get
         working-directory: flutter
