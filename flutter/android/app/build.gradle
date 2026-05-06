@@ -83,6 +83,9 @@ protobuf {
 
 android {
     compileSdkVersion 34
+    // namespace keeps the kotlin code-package as com.carriez.flutter_hbb (strategy b:
+    // only the install identity changes, not the source tree).
+    namespace "com.carriez.flutter_hbb"
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
 
@@ -97,7 +100,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.carriez.flutter_hbb"
+        applicationId "com.simiconnect.next.support"
         minSdkVersion 22
         targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()
