@@ -120,23 +120,64 @@ jobs:
           restore-keys: |
             pub-${{ runner.os }}-
 
-      - name: Install system deps and opus via vcpkg
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nasm cmake ninja-build pkg-config unzip curl
+
+      # magnum-opus needs opus headers for each Android ABI.
+      # Build opus from source with the NDK toolchain and install into a
+      # VCPKG-layout tree so build.rs finds it at $VCPKG_ROOT/installed/<triplet>/
+      - name: Build opus for Android ABIs
         shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends nasm cmake ninja-build pkg-config unzip curl zip
-          # GitHub-hosted ubuntu runners ship vcpkg at /usr/local/share/vcpkg.
-          # Export VCPKG_ROOT so magnum-opus build.rs finds it.
-          export VCPKG_ROOT=/usr/local/share/vcpkg
+          OPUS_VERSION=1.5.2
+          OPUS_PREFIX="${HOME}/opus-android"
+          mkdir -p /tmp/opus-src
+          curl -fsSL "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz" \
+            | tar -xz -C /tmp/opus-src --strip-components=1
+
+          # Map cargo-ndk targets → NDK toolchain triple + abi name
+          declare -A TARGET_MAP
+          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android"
+          TARGET_MAP["armv7-linux-androideabi"]="armv7a-linux-androideabi:armeabi-v7a:arm-neon-android"
+          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android"
+
+          NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          MIN_SDK=21
+
+          for cargo_target in "${!TARGET_MAP[@]}"; do
+            IFS=: read -r ndk_triple abi vcpkg_triplet <<< "${TARGET_MAP[$cargo_target]}"
+            echo "==> Building opus for ${cargo_target} (abi=${abi})"
+            install_dir="${OPUS_PREFIX}/${vcpkg_triplet}"
+            mkdir -p "${install_dir}"
+            pushd /tmp/opus-src >/dev/null
+            CC="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
+            CFLAGS="-O2 -fPIC" \
+            cmake -S . -B "build-${abi}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="${install_dir}" \
+              -DCMAKE_SYSTEM_NAME=Android \
+              -DCMAKE_SYSTEM_VERSION=${MIN_SDK} \
+              -DCMAKE_ANDROID_ARCH_ABI="${abi}" \
+              -DCMAKE_ANDROID_NDK="${ANDROID_NDK_HOME}" \
+              -DCMAKE_C_COMPILER="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DOPUS_BUILD_PROGRAMS=OFF \
+              -DOPUS_BUILD_TESTING=OFF \
+              -G Ninja >/dev/null 2>&1
+            cmake --build "build-${abi}" --parallel 2 >/dev/null
+            cmake --install "build-${abi}" >/dev/null
+            popd >/dev/null
+          done
+
+          # Expose a VCPKG_ROOT-like layout so magnum-opus build.rs finds headers.
+          # magnum-opus checks: $VCPKG_ROOT/installed/<vcpkg-triplet>/include/opus/
+          export VCPKG_ROOT="${OPUS_PREFIX}"
           echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "$GITHUB_ENV"
-          # Install opus for Android cross-compilation targets.
-          # arm-neon-android covers armeabi-v7a; arm64-android = arm64-v8a.
-          "${VCPKG_ROOT}/vcpkg" install \
-            "opus:arm64-android" \
-            "opus:arm-neon-android" \
-            "opus:x64-android" \
-            --no-print-usage || true  # best-effort; build may succeed via fallback
 
       - name: flutter pub get
         working-directory: flutter
