@@ -191,8 +191,11 @@ jobs:
         id: vcpkg-cache
         uses: actions/cache@v4
         with:
-          path: /opt/artifacts/vcpkg/installed
-          key: vcpkg-android-arm64-x64-${{ hashFiles('vcpkg.json') }}-120deac306
+          path: |
+            /opt/artifacts/vcpkg/installed-arm64-android
+            /opt/artifacts/vcpkg/installed-x64-android
+            /opt/artifacts/vcpkg/installed
+          key: vcpkg-android-arm64-x64-${{ hashFiles('vcpkg.json') }}-120deac306-multitriplet-v1
 
       - name: Build vcpkg deps for Android (arm64 + x86_64)
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -202,13 +205,32 @@ jobs:
           ANDROID_NDK: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euo pipefail
-          # build_android_deps.sh requires vcpkg.json to exist (sanity check).
-          # In manifest mode, vcpkg honours VCPKG_DEFAULT_TRIPLET — set it per
-          # invocation instead of moving vcpkg.json aside (the previous
-          # workaround broke the script's sanity check).
-          chmod +x flutter/build_android_deps.sh
-          VCPKG_DEFAULT_TRIPLET=arm64-android flutter/build_android_deps.sh arm64-v8a
-          VCPKG_DEFAULT_TRIPLET=x64-android   flutter/build_android_deps.sh x86_64
+          # vcpkg in manifest mode is single-triplet — installing a second
+          # triplet into the same install root wipes the first. Install each
+          # triplet into its own --x-install-root, then rsync both into the
+          # legacy /opt/artifacts/vcpkg/installed/<triplet> path that the
+          # downstream cargo/hwcodec build expects.
+          /opt/artifacts/vcpkg/vcpkg install \
+            --triplet=arm64-android \
+            --x-install-root=/opt/artifacts/vcpkg/installed-arm64-android
+          /opt/artifacts/vcpkg/vcpkg install \
+            --triplet=x64-android \
+            --x-install-root=/opt/artifacts/vcpkg/installed-x64-android
+          mkdir -p /opt/artifacts/vcpkg/installed
+          rsync -a /opt/artifacts/vcpkg/installed-arm64-android/ /opt/artifacts/vcpkg/installed/
+          rsync -a /opt/artifacts/vcpkg/installed-x64-android/   /opt/artifacts/vcpkg/installed/
+
+      - name: Ensure legacy vcpkg installed/ layout is present (cache-hit path)
+        if: steps.vcpkg-cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/artifacts/vcpkg/installed
+          if [ -d /opt/artifacts/vcpkg/installed-arm64-android ]; then
+            rsync -a /opt/artifacts/vcpkg/installed-arm64-android/ /opt/artifacts/vcpkg/installed/
+          fi
+          if [ -d /opt/artifacts/vcpkg/installed-x64-android ]; then
+            rsync -a /opt/artifacts/vcpkg/installed-x64-android/ /opt/artifacts/vcpkg/installed/
+          fi
 
       - name: Export VCPKG_ROOT for Cargo builds
         run: echo "VCPKG_ROOT=/opt/artifacts/vcpkg" >> "$GITHUB_ENV"
