@@ -231,10 +231,9 @@ jobs:
             AR="${NDK_TOOLCHAIN}/llvm-ar" \
             STRIP="${NDK_TOOLCHAIN}/llvm-strip" \
             RANLIB="${NDK_TOOLCHAIN}/llvm-ranlib" \
+            CROSS="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-" \
             ./configure \
               --target="${vpx_target}" \
-              --sdk-path="${ANDROID_NDK_HOME}" \
-              --libc="${NDK_SYSROOT}" \
               --prefix="${install_dir}" \
               --disable-examples \
               --disable-tools \
