@@ -156,11 +156,8 @@ jobs:
           for triplet in arm64-android x64-android; do
             echo "==> Installing vcpkg packages for ${triplet}"
             "${VCPKG}" install \
-              "opus:${triplet}" \
-              "libvpx:${triplet}" \
-              "aom:${triplet}" \
-              "libyuv:${triplet}" \
-              "libjpeg-turbo:${triplet}" 2>&1 | tail -15
+              --triplet="${triplet}" \
+              opus libvpx aom libyuv libjpeg-turbo 2>&1 | tail -15
           done
 
       - name: Export VCPKG_ROOT for Cargo builds
