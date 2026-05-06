@@ -191,6 +191,63 @@ jobs:
           export VCPKG_ROOT="${OPUS_PREFIX}"
           echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "$GITHUB_ENV"
 
+      # libs/scrap binds libvpx; build from source for each Android ABI.
+      # Uses the same VCPKG_ROOT tree as the opus step above.
+      - name: Build libvpx for Android ABIs
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+        run: |
+          set -euo pipefail
+          VPX_VERSION=1.15.0
+          VPX_SRC=/tmp/vpx-src
+          mkdir -p "${VPX_SRC}"
+          curl -fsSL --max-time 120 \
+            "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz" \
+            | tar -xz -C "${VPX_SRC}" --strip-components=1
+
+          NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_SYSROOT="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          MIN_SDK=21
+
+          declare -A TARGET_MAP
+          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android:arm64"
+          TARGET_MAP["armv7-linux-androideabi"]="armv7a-linux-androideabi:armeabi-v7a:arm-neon-android:arm"
+          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android:x86_64"
+
+          for cargo_target in "${!TARGET_MAP[@]}"; do
+            IFS=: read -r ndk_triple abi vcpkg_triplet vpx_arch <<< "${TARGET_MAP[$cargo_target]}"
+            echo "==> Building libvpx for ${abi}"
+            install_dir="${VCPKG_ROOT}/installed/${vcpkg_triplet}"
+            mkdir -p "${install_dir}/lib" "${install_dir}/include"
+            pushd "${VPX_SRC}" >/dev/null
+            CC="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
+            CXX="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang++" \
+            AR="${NDK_TOOLCHAIN}/llvm-ar" \
+            STRIP="${NDK_TOOLCHAIN}/llvm-strip" \
+            RANLIB="${NDK_TOOLCHAIN}/llvm-ranlib" \
+            ./configure \
+              --target="${vpx_arch}-android-gcc" \
+              --sdk-path="${ANDROID_NDK_HOME}" \
+              --libc="${NDK_SYSROOT}" \
+              --prefix="${install_dir}" \
+              --disable-examples \
+              --disable-tools \
+              --disable-docs \
+              --disable-unit-tests \
+              --enable-static \
+              --disable-shared \
+              --enable-vp8 \
+              --enable-vp9 \
+              --enable-multithread \
+              > /dev/null 2>&1 || (cat config.log | tail -30; exit 1)
+            make -j2 >/dev/null 2>&1
+            make install >/dev/null 2>&1
+            popd >/dev/null
+            make -C "${VPX_SRC}" clean >/dev/null 2>&1 || true
+          done
+
       - name: flutter pub get
         working-directory: flutter
         run: flutter pub get
