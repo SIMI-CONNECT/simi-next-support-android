@@ -151,11 +151,15 @@ jobs:
           ANDROID_NDK: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euo pipefail
-          # Use the upstream-compatible build_android_deps.sh which calls:
-          #   vcpkg install --triplet <triplet> --x-install-root="$VCPKG_ROOT/installed"
+          # build_android_deps.sh does `pushd "$SCRIPTDIR/.."` (repo root) before
+          # calling vcpkg install. With vcpkg.json present, vcpkg enters manifest mode
+          # and ignores --triplet. Temporarily hide the manifest so vcpkg runs in
+          # classic mode and can install packages for specific Android triplets.
+          mv vcpkg.json vcpkg.json.bak
           chmod +x flutter/build_android_deps.sh
-          flutter/build_android_deps.sh arm64-v8a
-          flutter/build_android_deps.sh x86_64
+          flutter/build_android_deps.sh arm64-v8a || { mv vcpkg.json.bak vcpkg.json; exit 1; }
+          flutter/build_android_deps.sh x86_64 || { mv vcpkg.json.bak vcpkg.json; exit 1; }
+          mv vcpkg.json.bak vcpkg.json
 
       - name: Export VCPKG_ROOT for Cargo builds
         run: echo "VCPKG_ROOT=/opt/artifacts/vcpkg" >> "$GITHUB_ENV"
