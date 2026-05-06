@@ -631,8 +631,7 @@ class MainService : Service() {
         }
         val notification = notificationBuilder
             .setOngoing(true)
-            .setSmallIcon(R.mipmap.ic_stat_logo)
-            .setDefaults(Notification.DEFAULT_ALL)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentTitle(DEFAULT_NOTIFY_TITLE)
