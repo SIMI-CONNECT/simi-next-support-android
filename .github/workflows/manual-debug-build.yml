@@ -211,14 +211,18 @@ jobs:
           NDK_SYSROOT="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           MIN_SDK=21
 
+          # libvpx target names for Android (as expected by ./configure --target=)
+          # arm64-v8a → arm64-android-gcc
+          # armeabi-v7a → armv7-android-gcc
+          # x86_64 → x86_64-android-gcc
           declare -A TARGET_MAP
-          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android:arm64"
-          TARGET_MAP["armv7-linux-androideabi"]="armv7a-linux-androideabi:armeabi-v7a:arm-neon-android:arm"
-          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android:x86_64"
+          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android:arm64-android-gcc"
+          TARGET_MAP["armv7-linux-androideabi"]="armv7a-linux-androideabi:armeabi-v7a:arm-neon-android:armv7-android-gcc"
+          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android:x86_64-android-gcc"
 
           for cargo_target in "${!TARGET_MAP[@]}"; do
-            IFS=: read -r ndk_triple abi vcpkg_triplet vpx_arch <<< "${TARGET_MAP[$cargo_target]}"
-            echo "==> Building libvpx for ${abi}"
+            IFS=: read -r ndk_triple abi vcpkg_triplet vpx_target <<< "${TARGET_MAP[$cargo_target]}"
+            echo "==> Building libvpx for ${abi} (target=${vpx_target})"
             install_dir="${VCPKG_ROOT}/installed/${vcpkg_triplet}"
             mkdir -p "${install_dir}/lib" "${install_dir}/include"
             pushd "${VPX_SRC}" >/dev/null
@@ -228,7 +232,7 @@ jobs:
             STRIP="${NDK_TOOLCHAIN}/llvm-strip" \
             RANLIB="${NDK_TOOLCHAIN}/llvm-ranlib" \
             ./configure \
-              --target="${vpx_arch}-android-gcc" \
+              --target="${vpx_target}" \
               --sdk-path="${ANDROID_NDK_HOME}" \
               --libc="${NDK_SYSROOT}" \
               --prefix="${install_dir}" \
@@ -241,9 +245,9 @@ jobs:
               --enable-vp8 \
               --enable-vp9 \
               --enable-multithread \
-              > /dev/null 2>&1 || (cat config.log | tail -30; exit 1)
-            make -j2 >/dev/null 2>&1
-            make install >/dev/null 2>&1
+              --disable-runtime-cpu-detect 2>&1 | tail -5
+            make -j2 2>&1 | tail -3
+            make install 2>&1 | tail -3
             popd >/dev/null
             make -C "${VPX_SRC}" clean >/dev/null 2>&1 || true
           done
