@@ -392,9 +392,37 @@ jobs:
             build --release --features flutter,hwcodec
 
       # ------------------------------------------------------------------ #
+      # Write key.properties for the build.gradle signing fallback          #
+      #                                                                      #
+      # `flutter build apk` does NOT forward args after `--` to Gradle as   #
+      # project properties — it interprets the first one as a Dart entry-  #
+      # point target file and fails with "Target file ... not found". So   #
+      # we use the key.properties fallback path that build.gradle already  #
+      # supports (see flutter/android/app/build.gradle: storeFile /        #
+      # storePassword / keyAlias / keyPassword keys).                      #
+      # ------------------------------------------------------------------ #
+      - name: Write key.properties for signing
+        shell: bash
+        env:
+          KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          STORE_PASSWORD: ${{ secrets.SUPPORT_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SUPPORT_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SUPPORT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cat > flutter/android/key.properties <<EOF
+          storeFile=${KEYSTORE_PATH}
+          storePassword=${STORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+          chmod 600 flutter/android/key.properties
+
+      # ------------------------------------------------------------------ #
       # Signed APK build                                                     #
-      # The signingConfigs.release block in app/build.gradle reads these    #
-      # four -P properties (see flutter/android/app/build.gradle).          #
+      # The signingConfigs.release block in app/build.gradle reads the      #
+      # four signing values from flutter/android/key.properties (written   #
+      # in the previous step).                                              #
       # ------------------------------------------------------------------ #
       - name: flutter build apk --release (signed)
         working-directory: flutter
@@ -411,12 +439,7 @@ jobs:
             --dart-define=BACKEND_BASE_URL="${BACKEND_BASE_URL}" \
             --dart-define=BACKEND_SUPPORT_PUBKEY="${BACKEND_SUPPORT_PUBKEY}" \
             --dart-define=API_SERVER="${API_SERVER}" \
-            --dart-define=APP_CHANNEL=release \
-            -- \
-            -Psimi.keystoreFile="${{ steps.keystore.outputs.path }}" \
-            -Psimi.keystorePassword="${{ secrets.SUPPORT_KEYSTORE_PASSWORD }}" \
-            -Psimi.keyAlias="${{ secrets.SUPPORT_KEY_ALIAS }}" \
-            -Psimi.keyPassword="${{ secrets.SUPPORT_KEY_PASSWORD }}"
+            --dart-define=APP_CHANNEL=release
 
       # ------------------------------------------------------------------ #
       # Locate + rename output APKs                                          #
