@@ -137,8 +137,18 @@ jobs:
           OPUS_VERSION=1.5.2
           OPUS_PREFIX="${HOME}/opus-android"
           mkdir -p /tmp/opus-src
-          curl -fsSL "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz" \
-            | tar -xz -C /tmp/opus-src --strip-components=1
+          # Try multiple mirrors; xiph.org is sometimes blocked on GH runners.
+          for url in \
+            "https://github.com/xiph/opus/releases/download/v${OPUS_VERSION}/opus-${OPUS_VERSION}.tar.gz" \
+            "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-${OPUS_VERSION}.tar.gz" \
+            "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"; do
+            if curl -fsSL --max-time 60 "${url}" | tar -xz -C /tmp/opus-src --strip-components=1; then
+              break
+            fi
+            echo "Mirror ${url} failed, trying next..."
+            rm -rf /tmp/opus-src && mkdir -p /tmp/opus-src
+          done
+          [ -f /tmp/opus-src/CMakeLists.txt ] || { echo "All mirrors failed"; exit 1; }
 
           # Map cargo-ndk targets → NDK toolchain triple + abi name
           declare -A TARGET_MAP
