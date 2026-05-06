@@ -1,0 +1,325 @@
+# Simi Next Support — release build & sign
+#
+# This workflow lives in the FORK repo (SIMI-CONNECT/simi-next-support-android).
+# bootstrap-fork.sh copies the contents of android-fork-overlay/ into the fork
+# at fork-creation time, so on the fork side this file is at
+# .github/workflows/release.yml and runs against an already-merged tree
+# (upstream rustdesk/rustdesk @ pinned tag + our overlay applied).
+#
+# Decision: we do NOT re-run bootstrap-fork.sh from inside CI. The fork repo
+# IS the bootstrapped tree. Running bootstrap from CI would re-clone upstream
+# on every build and defeat the point of having a fork. To bump the upstream
+# pin, an operator re-runs bootstrap-fork.sh locally and pushes the result.
+#
+# (The mirror file under simi-next-support/android-fork-overlay/.github/
+# is the source-of-truth copy that gets stamped into the fork.)
+
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      rs_pub_key:
+        description: "RustDesk server ed25519 pubkey (base64). Leave empty to use SUPPORT_RS_PUB_KEY secret."
+        required: false
+        type: string
+        default: ""
+      backend_base_url:
+        description: "Backend base URL. Leave empty to use SUPPORT_BACKEND_BASE_URL secret."
+        required: false
+        type: string
+        default: ""
+      backend_support_pubkey:
+        description: "Backend curve25519 sealed-box pubkey. Leave empty to use SUPPORT_BACKEND_SUPPORT_PUBKEY secret."
+        required: false
+        type: string
+        default: ""
+      build_aab:
+        description: "Also build a Play Store .aab bundle"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-and-sign:
+    name: Build & sign Next Support APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      # Build-time configuration. workflow_dispatch inputs win if non-empty,
+      # otherwise we fall back to repo secrets. The shell `||` substitution
+      # happens in the steps that consume these.
+      RENDEZVOUS_SERVER: help.simiconnect.com
+      API_SERVER: ""
+      # Gradle signing-config env vars — the build.gradle.simi.kts overlay
+      # reads exactly these four names. Do not rename without updating the
+      # overlay in the same commit.
+      SIMI_KEYSTORE_PATH: ""        # set after we decode the keystore
+      SIMI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      SIMI_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      SIMI_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout fork (with full history for tag describe)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve build-config inputs
+        id: cfg
+        shell: bash
+        env:
+          IN_RS_PUB_KEY: ${{ github.event.inputs.rs_pub_key }}
+          IN_BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url }}
+          IN_BACKEND_SUPPORT_PUBKEY: ${{ github.event.inputs.backend_support_pubkey }}
+          SECRET_RS_PUB_KEY: ${{ secrets.SUPPORT_RS_PUB_KEY }}
+          SECRET_BACKEND_BASE_URL: ${{ secrets.SUPPORT_BACKEND_BASE_URL }}
+          SECRET_BACKEND_SUPPORT_PUBKEY: ${{ secrets.SUPPORT_BACKEND_SUPPORT_PUBKEY }}
+        run: |
+          set -euo pipefail
+          rs_pub_key="${IN_RS_PUB_KEY:-$SECRET_RS_PUB_KEY}"
+          backend_base_url="${IN_BACKEND_BASE_URL:-$SECRET_BACKEND_BASE_URL}"
+          backend_support_pubkey="${IN_BACKEND_SUPPORT_PUBKEY:-$SECRET_BACKEND_SUPPORT_PUBKEY}"
+          if [ -z "$rs_pub_key" ] || [ -z "$backend_base_url" ] || [ -z "$backend_support_pubkey" ]; then
+            echo "::error::Missing one of rs_pub_key / backend_base_url / backend_support_pubkey (neither input nor secret provided)."
+            exit 1
+          fi
+          # Mask the values so they don't leak via `set -x` or build logs downstream.
+          echo "::add-mask::$rs_pub_key"
+          echo "::add-mask::$backend_support_pubkey"
+          {
+            echo "rs_pub_key<<EOF"
+            echo "$rs_pub_key"
+            echo "EOF"
+            echo "backend_base_url<<EOF"
+            echo "$backend_base_url"
+            echo "EOF"
+            echo "backend_support_pubkey<<EOF"
+            echo "$backend_support_pubkey"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Flutter pin: 3.24.5 — latest stable in the 3.24.x line as of 2026-05-06.
+      # TODO(verify): confirm against upstream rustdesk's flutter-version file
+      # at the pinned tag (see android-fork-notes/PINNED_TAG, currently 1.4.6).
+      - name: Set up Flutter 3.24.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+
+      # Rust pin: 1.81.0 — chosen to match the toolchain rustdesk's CI used
+      # around the 1.4.x release line. Bump only via manual-debug-build.yml first.
+      # TODO(verify): cross-check upstream rust-toolchain.toml at PINNED_TAG.
+      - name: Set up Rust 1.81.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.81.0"
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: simi-next-support-android
+          # Cargo lock + target triples scope this naturally; no extra key needed.
+
+      # NDK pin: r27c — the LTS-ish r27 series, current as of 2026-05-06 and
+      # known-good for cargo-ndk + Flutter 3.24.x.
+      # TODO(verify): rustdesk upstream may pin a different NDK in flutter/android.
+      - name: Set up Android NDK r27c
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Export NDK env
+        shell: bash
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+
+      - name: Cache cargo-ndk binary
+        id: cache-cargo-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-3.5.4-${{ runner.os }}
+
+      - name: Install cargo-ndk 3.5.4
+        if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --version 3.5.4 --locked
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache pub (pubspec.lock)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            pub-${{ runner.os }}-
+
+      - name: Decode release keystore
+        id: keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is empty."
+            exit 1
+          fi
+          ks_dir="${RUNNER_TEMP}/keystore"
+          mkdir -p "$ks_dir"
+          ks_path="${ks_dir}/simi-next-support.jks"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > "$ks_path"
+          if [ ! -s "$ks_path" ]; then
+            echo "::error::Decoded keystore is empty — KEYSTORE_BASE64 likely corrupted."
+            exit 1
+          fi
+          chmod 600 "$ks_path"
+          echo "SIMI_KEYSTORE_PATH=$ks_path" >> "$GITHUB_ENV"
+          echo "path=$ks_path" >> "$GITHUB_OUTPUT"
+
+      - name: flutter pub get
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Build Rust libs for arm64-v8a, armeabi-v7a, x86_64
+        shell: bash
+        env:
+          # Limit C/C++ parallelism to avoid OOM on hosted runners.
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
+        run: |
+          set -euo pipefail
+          # Build the librustdesk_core (or whatever upstream names it) for each
+          # ABI. Upstream's flutter/android plugin script handles the actual
+          # cargo-ndk invocation; if the overlay's build.gradle.simi.kts wires
+          # this into a Gradle task instead, this step becomes a no-op.
+          cargo ndk \
+            -t arm64-v8a \
+            -t armeabi-v7a \
+            -t x86_64 \
+            -o flutter/android/app/src/main/jniLibs \
+            build --release
+
+      - name: flutter build apk --release (signed)
+        working-directory: flutter
+        shell: bash
+        env:
+          RS_PUB_KEY: ${{ steps.cfg.outputs.rs_pub_key }}
+          BACKEND_BASE_URL: ${{ steps.cfg.outputs.backend_base_url }}
+          BACKEND_SUPPORT_PUBKEY: ${{ steps.cfg.outputs.backend_support_pubkey }}
+        run: |
+          set -euo pipefail
+          flutter build apk --release \
+            --dart-define=RENDEZVOUS_SERVER="${RENDEZVOUS_SERVER}" \
+            --dart-define=RS_PUB_KEY="${RS_PUB_KEY}" \
+            --dart-define=BACKEND_BASE_URL="${BACKEND_BASE_URL}" \
+            --dart-define=BACKEND_SUPPORT_PUBKEY="${BACKEND_SUPPORT_PUBKEY}" \
+            --dart-define=API_SERVER="${API_SERVER}"
+
+      - name: flutter build appbundle (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_aab == 'true' }}
+        working-directory: flutter
+        shell: bash
+        env:
+          RS_PUB_KEY: ${{ steps.cfg.outputs.rs_pub_key }}
+          BACKEND_BASE_URL: ${{ steps.cfg.outputs.backend_base_url }}
+          BACKEND_SUPPORT_PUBKEY: ${{ steps.cfg.outputs.backend_support_pubkey }}
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release \
+            --dart-define=RENDEZVOUS_SERVER="${RENDEZVOUS_SERVER}" \
+            --dart-define=RS_PUB_KEY="${RS_PUB_KEY}" \
+            --dart-define=BACKEND_BASE_URL="${BACKEND_BASE_URL}" \
+            --dart-define=BACKEND_SUPPORT_PUBKEY="${BACKEND_SUPPORT_PUBKEY}" \
+            --dart-define=API_SERVER="${API_SERVER}"
+
+      - name: Locate signed APK
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find flutter/build/app/outputs/flutter-apk -maxdepth 2 -name 'app-release.apk' -print -quit || true)"
+          if [ -z "$apk" ] || [ ! -s "$apk" ]; then
+            echo "::error::No signed app-release.apk found under flutter/build/app/outputs/flutter-apk/"
+            exit 1
+          fi
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          aab="$(find flutter/build/app/outputs/bundle/release -maxdepth 2 -name 'app-release.aab' -print -quit 2>/dev/null || true)"
+          if [ -n "$aab" ]; then
+            echo "aab=$aab" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify APK signature (apksigner)
+        shell: bash
+        env:
+          APK: ${{ steps.locate.outputs.apk }}
+        run: |
+          set -euo pipefail
+          # Locate apksigner via the SDK that flutter/Gradle already provisioned.
+          # ANDROID_SDK_ROOT is set by setup-java/setup-flutter on hosted runners.
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::ANDROID_SDK_ROOT / ANDROID_HOME not set; cannot find apksigner."
+            exit 1
+          fi
+          apksigner="$(find "$sdk/build-tools" -name apksigner -type f | sort -V | tail -n1)"
+          if [ -z "$apksigner" ]; then
+            echo "::error::apksigner not found under $sdk/build-tools."
+            exit 1
+          fi
+          "$apksigner" verify --verbose --print-certs "$APK"
+
+      - name: Upload APK as workflow artifact (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: simi-next-support-apk-${{ github.run_id }}
+          path: |
+            ${{ steps.locate.outputs.apk }}
+            ${{ steps.locate.outputs.aab }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach APK to GitHub Release
+        if: ${{ github.event_name == 'release' }}
+        uses: softprops/action-gh-release@v2
+        # TODO(verify): softprops/action-gh-release is the de-facto community
+        # action for release uploads; pinned to v2. If your org policy requires
+        # first-party only, swap for a `gh release upload` step instead.
+        with:
+          files: |
+            ${{ steps.locate.outputs.apk }}
+            ${{ steps.locate.outputs.aab }}
+          fail_on_unmatched_files: false

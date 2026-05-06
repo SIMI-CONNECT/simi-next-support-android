@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright (c) Simi Connect — Next Support fork.
+    Original work: RustDesk, GPL-3.0. This file is GPL-3.0.
+
+    simi-config.xml — non-secret, build-time-injected string resources.
+
+    The ${simi*} tokens are resolved by Gradle's manifestPlaceholders
+    mechanism (see ../../../build.gradle.simi.kts). Kotlin code reads
+    these via R.string.simi_* without needing to touch BuildConfig.
+
+    These are NOT translatable — they are configuration values, not UI
+    text. Do not move them into strings.xml.
+-->
+<resources>
+    <string name="simi_rendezvous_server" translatable="false">${simiRendezvousServer}</string>
+    <string name="simi_rs_pub_key"        translatable="false">${simiRsPubKey}</string>
+    <string name="simi_api_server"        translatable="false">${simiApiServer}</string>
+    <string name="simi_backend_base_url"  translatable="false">${simiBackendBaseUrl}</string>
+</resources>

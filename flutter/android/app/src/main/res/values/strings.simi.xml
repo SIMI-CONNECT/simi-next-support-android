@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Simi Next Support - Android string overlay.
+
+  This file is rsync'd into upstream RustDesk's
+  flutter/android/app/src/main/res/values/ by bootstrap-fork.sh.
+
+  NOTE on app_name / android:label:
+  Upstream RustDesk's AndroidManifest.xml hard-codes the launcher
+  label (typically android:label="@string/app_name" — verify against
+  PINNED_TAG). We override the value of @string/app_name here so the
+  manifest does not need editing. If upstream switches to a literal
+  label string in the manifest, replace this approach with a manifest
+  patch under patches/ instead of this file.
+
+  TODO(verify): confirm upstream uses @string/app_name in
+    flutter/android/app/src/main/AndroidManifest.xml at PINNED_TAG.
+-->
+<resources>
+    <string name="app_name">Next Support</string>
+
+    <!-- Used by simi_branding/home_page_simi.dart -->
+    <string name="support_tagline">Simi technician support</string>
+    <string name="support_id_label">Your support ID</string>
+    <string name="support_password_label">Password (rotate via dashboard)</string>
+    <string name="support_reveal_password">Tap to reveal</string>
+    <string name="support_hide_password">Tap to hide</string>
+    <string name="support_tech_connecting">Tech is connecting</string>
+    <string name="support_help_link_label">Need help? help.simiconnect.com</string>
+</resources>

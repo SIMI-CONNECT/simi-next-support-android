@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Simi Next Support - Android color overlay.
+
+  Sourced from simi-next-android/app/src/main/res/values/colors.xml
+  (color name="simi_primary" #FF0F62FE) on 2026-05-06.
+
+  TODO(verify): brand owner sign-off on these exact values for the
+    Next Support surface. The simi-next-android value above is what
+    the flagship app currently ships; if the brand book diverges
+    these will need to update. Canonical brand color reference lives
+    in the simi-web design tokens (see operator README).
+
+  TODO(verify): the adaptive-icon background (simi_brand_background)
+    should match the launcher PNG's transparent/white treatment — if
+    the operator drops in the white-on-transparent foreground
+    variant, the background below is what shows through.
+-->
+<resources>
+    <!-- Primary brand blue (carried from simi-next-android). -->
+    <color name="simi_brand_primary">#FF0F62FE</color>
+    <color name="simi_brand_primary_dark">#FF0043CE</color>
+
+    <!-- Optional accent. TODO(verify): no canonical accent defined yet. -->
+    <color name="simi_brand_accent">#FF42BE65</color>
+
+    <!-- Adaptive launcher icon background. White matches PWA logo bg. -->
+    <color name="simi_brand_background">#FFFFFFFF</color>
+
+    <!-- Material theme bindings. Upstream RustDesk consumes
+         colorPrimary / colorAccent in styles.xml. -->
+    <color name="colorPrimary">#FF0F62FE</color>
+    <color name="colorPrimaryDark">#FF0043CE</color>
+    <color name="colorAccent">#FF0F62FE</color>
+    <color name="colorSurface">#FFFFFFFF</color>
+
+    <!-- Legacy alias used elsewhere in the Simi fleet. -->
+    <color name="simi_brand_orange">#FFFF6F00</color>
+</resources>
