@@ -244,7 +244,8 @@ jobs:
               --enable-vp8 \
               --enable-vp9 \
               --enable-multithread \
-              --disable-runtime-cpu-detect 2>&1 | tail -5
+              --disable-runtime-cpu-detect \
+              --disable-asm 2>&1 | tail -5
             make -j2 2>&1 | tail -3
             make install 2>&1 | tail -3
             popd >/dev/null
