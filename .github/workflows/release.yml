@@ -76,6 +76,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # libs/hbb_common is a submodule; clone explicitly if gitlink is missing.
+      - name: Init submodule libs/hbb_common
+        run: |
+          git submodule update --init --recursive || true
+          if [ ! -f libs/hbb_common/Cargo.toml ]; then
+            rm -rf libs/hbb_common
+            git clone --depth 1 https://github.com/rustdesk/hbb_common libs/hbb_common
+          fi
+
       - name: Resolve build-config inputs
         id: cfg
         shell: bash

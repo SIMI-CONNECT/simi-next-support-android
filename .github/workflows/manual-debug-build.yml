@@ -48,6 +48,19 @@ jobs:
         with:
           fetch-depth: 1
 
+      # libs/hbb_common is a submodule pointing at rustdesk/hbb_common.
+      # Because this repo was bootstrapped as a flat tree the gitlink SHA is
+      # not recorded; clone it explicitly at the same commit the upstream
+      # rustdesk/rustdesk@1.4.6 tag referenced.
+      - name: Init submodule libs/hbb_common
+        run: |
+          git submodule update --init --recursive || true
+          # Fallback: if the gitlink is missing, clone the public submodule directly.
+          if [ ! -f libs/hbb_common/Cargo.toml ]; then
+            rm -rf libs/hbb_common
+            git clone --depth 1 https://github.com/rustdesk/hbb_common libs/hbb_common
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
