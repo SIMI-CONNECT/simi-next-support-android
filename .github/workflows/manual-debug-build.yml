@@ -160,8 +160,7 @@ jobs:
               "libvpx:${triplet}" \
               "aom:${triplet}" \
               "libyuv:${triplet}" \
-              "libjpeg-turbo:${triplet}" \
-              --no-print-usage 2>&1 | tail -15
+              "libjpeg-turbo:${triplet}" 2>&1 | tail -15
           done
 
       - name: Export VCPKG_ROOT for Cargo builds
