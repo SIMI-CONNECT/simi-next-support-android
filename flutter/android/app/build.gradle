@@ -8,10 +8,38 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def keystoreProperties = new Properties()
+// ---------------------------------------------------------------------------
+// Signing configuration — two modes, checked in priority order:
+//
+//   1. CI mode (GitHub Actions release.yml):
+//      Gradle project properties injected via -P flags:
+//        -Psimi.keystoreFile=<abs path decoded by workflow>
+//        -Psimi.keystorePassword=<value from SUPPORT_KEYSTORE_PASSWORD secret>
+//        -Psimi.keyAlias=<value from SUPPORT_KEY_ALIAS secret>
+//        -Psimi.keyPassword=<value from SUPPORT_KEY_PASSWORD secret>
+//
+//   2. Local dev mode:
+//      flutter/android/key.properties (git-ignored) with the same four keys:
+//        storeFile, storePassword, keyAlias, keyPassword
+//
+// If neither source provides a valid storeFile the release signingConfig is
+// left unconfigured — the build will still succeed but the APK will be
+// unsigned (unsuitable for distribution).
+// ---------------------------------------------------------------------------
+def simiKeystoreFile     = findProperty('simi.keystoreFile')     ?: null
+def simiKeystorePassword = findProperty('simi.keystorePassword') ?: null
+def simiKeyAlias         = findProperty('simi.keyAlias')         ?: null
+def simiKeyPassword      = findProperty('simi.keyPassword')      ?: null
+
+// Fallback: key.properties next to this build.gradle (local dev workflow).
 def keystorePropertiesFile = rootProject.file('key.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+if (keystorePropertiesFile.exists() && simiKeystoreFile == null) {
+    def kp = new Properties()
+    kp.load(new FileInputStream(keystorePropertiesFile))
+    simiKeystoreFile     = kp['storeFile']
+    simiKeystorePassword = kp['storePassword']
+    simiKeyAlias         = kp['keyAlias']
+    simiKeyPassword      = kp['keyPassword']
 }
 
 def localProperties = new Properties()
@@ -108,12 +136,12 @@ android {
     }
 
     signingConfigs {
-      release {
-        keyAlias keystoreProperties['keyAlias']
-        keyPassword keystoreProperties['keyPassword']
-        storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-        storePassword keystoreProperties['storePassword']
-      }
+        release {
+            keyAlias     simiKeyAlias
+            keyPassword  simiKeyPassword
+            storeFile    simiKeystoreFile ? file(simiKeystoreFile) : null
+            storePassword simiKeystorePassword
+        }
     }
 
     buildTypes {
