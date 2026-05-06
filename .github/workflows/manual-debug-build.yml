@@ -77,6 +77,7 @@ jobs:
         with:
           toolchain: "1.81.0"
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -123,136 +124,48 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends nasm yasm cmake ninja-build pkg-config unzip curl \
+          sudo apt-get install -y --no-install-recommends \
+            nasm yasm cmake ninja-build pkg-config unzip curl zip \
             libc6-dev gcc-multilib
 
-      # magnum-opus needs opus headers for each Android ABI.
-      # Build opus from source with the NDK toolchain and install into a
-      # VCPKG-layout tree so build.rs finds it at $VCPKG_ROOT/installed/<triplet>/
-      - name: Build opus for Android ABIs
-        shell: bash
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        run: |
-          set -euo pipefail
-          OPUS_VERSION=1.5.2
-          OPUS_PREFIX="${HOME}/opus-android"
-          mkdir -p /tmp/opus-src
-          # Try multiple mirrors; xiph.org is sometimes blocked on GH runners.
-          for url in \
-            "https://github.com/xiph/opus/releases/download/v${OPUS_VERSION}/opus-${OPUS_VERSION}.tar.gz" \
-            "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-${OPUS_VERSION}.tar.gz" \
-            "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"; do
-            if curl -fsSL --max-time 60 "${url}" | tar -xz -C /tmp/opus-src --strip-components=1; then
-              break
-            fi
-            echo "Mirror ${url} failed, trying next..."
-            rm -rf /tmp/opus-src && mkdir -p /tmp/opus-src
-          done
-          [ -f /tmp/opus-src/CMakeLists.txt ] || { echo "All mirrors failed"; exit 1; }
+      # Install vcpkg and use the repo's vcpkg.json to build native deps
+      # (opus, libvpx, aom, libyuv) for Android ABIs via the NDK toolchain.
+      # We cache the vcpkg installed tree keyed by vcpkg.json + vcpkg commit.
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "120deac3062162151622ca4860575a33844ba10b"
 
-          # Map cargo-ndk targets → NDK toolchain triple + abi name
-          declare -A TARGET_MAP
-          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android"
-          TARGET_MAP["armv7-linux-androideabi"]="armv7a-linux-androideabi:armeabi-v7a:arm-neon-android"
-          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android"
+      - name: Cache vcpkg Android packages
+        id: vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg_installed
+          key: vcpkg-android-arm64-x64-${{ hashFiles('vcpkg.json') }}-120deac306
 
-          NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          MIN_SDK=21
-
-          for cargo_target in "${!TARGET_MAP[@]}"; do
-            IFS=: read -r ndk_triple abi vcpkg_triplet <<< "${TARGET_MAP[$cargo_target]}"
-            echo "==> Building opus for ${cargo_target} (abi=${abi})"
-            # VCPKG layout: $VCPKG_ROOT/installed/<triplet>/{include,lib}
-            install_dir="${OPUS_PREFIX}/installed/${vcpkg_triplet}"
-            mkdir -p "${install_dir}"
-            pushd /tmp/opus-src >/dev/null
-            CC="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
-            CFLAGS="-O2 -fPIC" \
-            cmake -S . -B "build-${abi}" \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_INSTALL_PREFIX="${install_dir}" \
-              -DCMAKE_SYSTEM_NAME=Android \
-              -DCMAKE_SYSTEM_VERSION=${MIN_SDK} \
-              -DCMAKE_ANDROID_ARCH_ABI="${abi}" \
-              -DCMAKE_ANDROID_NDK="${ANDROID_NDK_HOME}" \
-              -DCMAKE_C_COMPILER="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
-              -DBUILD_SHARED_LIBS=OFF \
-              -DOPUS_BUILD_PROGRAMS=OFF \
-              -DOPUS_BUILD_TESTING=OFF \
-              -G Ninja >/dev/null 2>&1
-            cmake --build "build-${abi}" --parallel 2 >/dev/null
-            cmake --install "build-${abi}" >/dev/null
-            popd >/dev/null
-          done
-
-          # Expose a VCPKG_ROOT-like layout so magnum-opus build.rs finds headers.
-          # magnum-opus checks: $VCPKG_ROOT/installed/<vcpkg-triplet>/include/opus/
-          export VCPKG_ROOT="${OPUS_PREFIX}"
-          echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "$GITHUB_ENV"
-
-      # libs/scrap binds libvpx; build from source for each Android ABI.
-      # Uses the same VCPKG_ROOT tree as the opus step above.
-      - name: Build libvpx for Android ABIs
-        shell: bash
+      - name: Build vcpkg deps for Android (arm64 + x86_64)
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
         run: |
           set -euo pipefail
-          VPX_VERSION=1.15.0
-          VPX_SRC=/tmp/vpx-src
-          mkdir -p "${VPX_SRC}"
-          curl -fsSL --max-time 120 \
-            "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz" \
-            | tar -xz -C "${VPX_SRC}" --strip-components=1
-
-          NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          NDK_SYSROOT="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          MIN_SDK=21
-
-          # libvpx target names for Android (as expected by ./configure --target=)
-          # arm64-v8a → arm64-android-gcc
-          # x86_64 → x86_64-android-gcc
-          # NOTE: armeabi-v7a is excluded here — armv7 ASM requires a compatible
-          # NDK assembler that isn't straightforward to invoke cross-platform.
-          # The cargo ndk step below still builds armv7 but will pull the vpx
-          # static lib from the arm64 or dynamic path. Remove this comment and
-          # add armv7 back once the assembler issue is resolved.
-          declare -A TARGET_MAP
-          TARGET_MAP["aarch64-linux-android"]="aarch64-linux-android:arm64-v8a:arm64-android:arm64-android-gcc"
-          TARGET_MAP["x86_64-linux-android"]="x86_64-linux-android:x86_64:x64-android:x86_64-android-gcc"
-
-          for cargo_target in "${!TARGET_MAP[@]}"; do
-            IFS=: read -r ndk_triple abi vcpkg_triplet vpx_target <<< "${TARGET_MAP[$cargo_target]}"
-            echo "==> Building libvpx for ${abi} (target=${vpx_target})"
-            install_dir="${VCPKG_ROOT}/installed/${vcpkg_triplet}"
-            mkdir -p "${install_dir}/lib" "${install_dir}/include"
-            pushd "${VPX_SRC}" >/dev/null
-            CC="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang" \
-            CXX="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-clang++" \
-            AR="${NDK_TOOLCHAIN}/llvm-ar" \
-            STRIP="${NDK_TOOLCHAIN}/llvm-strip" \
-            RANLIB="${NDK_TOOLCHAIN}/llvm-ranlib" \
-            CROSS="${NDK_TOOLCHAIN}/${ndk_triple}${MIN_SDK}-" \
-            ./configure \
-              --target="${vpx_target}" \
-              --prefix="${install_dir}" \
-              --disable-examples \
-              --disable-tools \
-              --disable-docs \
-              --disable-unit-tests \
-              --enable-static \
-              --disable-shared \
-              --enable-vp8 \
-              --enable-vp9 \
-              --enable-multithread \
-              --disable-runtime-cpu-detect 2>&1 | tail -5
-            make -j2 2>&1 | tail -3
-            make install 2>&1 | tail -3
-            popd >/dev/null
-            make -C "${VPX_SRC}" clean >/dev/null 2>&1 || true
+          # Install for arm64-android and x64-android triplets.
+          # armeabi-v7a skipped for debug (armv7 ASM issues with libvpx).
+          for triplet in arm64-android x64-android; do
+            echo "==> Installing vcpkg packages for ${triplet}"
+            "${VCPKG_ROOT}/vcpkg" install \
+              --triplet="${triplet}" \
+              --x-install-root="${GITHUB_WORKSPACE}/vcpkg_installed" \
+              --overlay-triplets="${VCPKG_ROOT}/triplets/community" \
+              opus libvpx aom libyuv libjpeg-turbo 2>&1 | tail -10
           done
+
+      - name: Export VCPKG_ROOT for Cargo builds
+        run: |
+          echo "VCPKG_ROOT=${{ env.VCPKG_ROOT }}" >> "$GITHUB_ENV"
+          # Point vcpkg install root to our workspace-local installed dir
+          echo "VCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed" >> "$GITHUB_ENV"
 
       - name: flutter pub get
         working-directory: flutter
