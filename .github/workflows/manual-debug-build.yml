@@ -120,6 +120,24 @@ jobs:
           restore-keys: |
             pub-${{ runner.os }}-
 
+      - name: Install system deps and opus via vcpkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nasm cmake ninja-build pkg-config unzip curl zip
+          # GitHub-hosted ubuntu runners ship vcpkg at /usr/local/share/vcpkg.
+          # Export VCPKG_ROOT so magnum-opus build.rs finds it.
+          export VCPKG_ROOT=/usr/local/share/vcpkg
+          echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "$GITHUB_ENV"
+          # Install opus for Android cross-compilation targets.
+          # arm-neon-android covers armeabi-v7a; arm64-android = arm64-v8a.
+          "${VCPKG_ROOT}/vcpkg" install \
+            "opus:arm64-android" \
+            "opus:arm-neon-android" \
+            "opus:x64-android" \
+            --no-print-usage || true  # best-effort; build may succeed via fallback
+
       - name: flutter pub get
         working-directory: flutter
         run: flutter pub get
