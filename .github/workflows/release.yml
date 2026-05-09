@@ -92,6 +92,7 @@ jobs:
     env:
       RENDEZVOUS_SERVER: help.simiconnect.com
       API_SERVER: ""
+      APP_NAME: "Next Support"
 
     steps:
       - name: Checkout fork (full history for tag describe)
@@ -111,6 +112,69 @@ jobs:
             git clone https://github.com/rustdesk/hbb_common libs/hbb_common
             (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
           fi
+
+      # ------------------------------------------------------------------ #
+      # Patch libs/hbb_common/src/config.rs so RENDEZVOUS_SERVERS,         #
+      # RS_PUB_KEY, API_SERVER, and APP_NAME are baked in at compile time. #
+      # MUST stay in lockstep with the same step in manual-debug-build.yml.#
+      # ------------------------------------------------------------------ #
+      - name: Patch hbb_common config.rs (bake server defaults + APP_NAME via option_env)
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys, textwrap
+
+          cfg = pathlib.Path("libs/hbb_common/src/config.rs")
+          src = cfg.read_text()
+
+          if 'option_env!("RENDEZVOUS_SERVER")' in src:
+              print("config.rs already patched for server config, skipping that part.")
+          else:
+              OLD = (
+                  'pub const RENDEZVOUS_SERVERS: &[&str] = &["rs-ny.rustdesk.com"];\n'
+                  'pub const RS_PUB_KEY: &str = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";'
+              )
+              if OLD not in src:
+                  print("ERROR: expected RENDEZVOUS_SERVERS block not found", file=sys.stderr)
+                  sys.exit(1)
+              NEW = (
+                  '// Baked in at compile time; override via RENDEZVOUS_SERVER / RS_PUB_KEY /\n'
+                  '// API_SERVER env vars passed to cargo.  const match is used instead of\n'
+                  '// option_env!().unwrap_or() which is not yet a stable const fn.\n'
+                  'pub const RENDEZVOUS_SERVERS: &[&str] = &[match option_env!("RENDEZVOUS_SERVER") {\n'
+                  '    Some(v) => v,\n'
+                  '    None => "rs-ny.rustdesk.com",\n'
+                  '}];\n'
+                  'pub const RS_PUB_KEY: &str = match option_env!("RS_PUB_KEY") {\n'
+                  '    Some(v) => v,\n'
+                  '    None => "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=",\n'
+                  '};\n'
+                  'pub const API_SERVER: &str = match option_env!("API_SERVER") {\n'
+                  '    Some(v) => v,\n'
+                  '    None => "",\n'
+                  '};'
+              )
+              src = src.replace(OLD, NEW)
+              print("server config block patched.")
+
+          OLD_APP = 'pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());'
+          NEW_APP = (
+              'pub static ref APP_NAME: RwLock<String> = RwLock::new(match option_env!("APP_NAME") {\n'
+              '        Some(v) => v,\n'
+              '        None => "RustDesk",\n'
+              '    }.to_owned());'
+          )
+          if NEW_APP in src:
+              print("APP_NAME already patched, skipping.")
+          elif OLD_APP not in src:
+              print("ERROR: expected APP_NAME init line not found", file=sys.stderr)
+              sys.exit(1)
+          else:
+              src = src.replace(OLD_APP, NEW_APP)
+              print("APP_NAME init patched.")
+
+          cfg.write_text(src)
+          print("config.rs patched successfully.")
+          PY
 
       # ------------------------------------------------------------------ #
       # Resolve build-config: workflow_dispatch inputs win over secrets.    #
@@ -381,6 +445,7 @@ jobs:
           RENDEZVOUS_SERVER: ${{ env.RENDEZVOUS_SERVER }}
           RS_PUB_KEY: ${{ steps.cfg.outputs.rs_pub_key }}
           API_SERVER: ${{ env.API_SERVER }}
+          APP_NAME: ${{ env.APP_NAME }}
         run: |
           set -euo pipefail
           # armeabi-v7a excluded: libvpx ARMv7 NDK cross-compile is broken.

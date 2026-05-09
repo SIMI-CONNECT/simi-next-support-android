@@ -18,6 +18,7 @@
 -->
 <resources>
     <string name="app_name">Next Support</string>
+    <string name="accessibility_service_label">Next Support Input</string>
 
     <!-- Used by simi_branding/home_page_simi.dart -->
     <string name="support_tagline">Simi technician support</string>
