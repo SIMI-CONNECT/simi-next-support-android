@@ -1,19 +1,18 @@
 // Simi Next Support — signage home page.
 //
-// One screen, DPAD-tunable, big-font readouts only. No tabs, no
-// permission switches, no Stop service button, no connection-manager
-// list. The AccessibilityService auto-grants Screen Capture and
-// home_page auto-fires the foreground service, so by the time the
-// operator sees this surface it's already serving — they just need
-// to read off the ID and password to the tech.
+// Black-background, single-screen, DPAD-tunable surface for signage TVs.
 //
-// What lives here:
+// Layout (top to bottom):
+//   - SIMI Next logo
 //   - Status badge (Ready / Connecting / Not ready / Tech connected)
-//   - Support ID (very large)
-//   - Password (very large)
+//   - Support ID (very large, white)
+//   - Password (very large, white, monospace)
+//   - "Give this code to your Simi Engineer"
 //
-// Anything else (Settings, Set permanent password, etc.) is reachable
-// via the AppBar 3-dot menu, which lives outside this widget.
+// The AccessibilityService auto-grants screen capture and home_page
+// auto-fires the foreground service, so by the time the operator
+// sees this surface it's already serving — they just read the values
+// to the engineer.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +20,11 @@ import 'package:provider/provider.dart';
 import '../common.dart';
 import '../models/platform_model.dart';
 import '../models/server_model.dart';
+
+const Color _kBg = Color(0xFF000000);
+const Color _kFg = Color(0xFFFFFFFF);
+const Color _kFgDim = Color(0xFFB0B0B0);
+const Color _kFgFaint = Color(0xFF8D8D8D);
 
 class SignageHomePage extends StatelessWidget {
   const SignageHomePage({Key? key}) : super(key: key);
@@ -50,19 +54,23 @@ class _Body extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      color: Colors.white,
+      color: _kBg,
       child: SafeArea(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Top: status badge.
+            // Top: logo + status badge.
             Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: Center(
-                child: _StatusBadge(serverModel: serverModel, hasClient: hasClient),
+              padding: const EdgeInsets.only(top: 24),
+              child: Column(
+                children: [
+                  const _Logo(),
+                  const SizedBox(height: 16),
+                  _StatusBadge(serverModel: serverModel, hasClient: hasClient),
+                ],
               ),
             ),
-            // Middle: ID + password, both centered.
+            // Middle: ID + password, centered.
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -82,12 +90,25 @@ class _Body extends StatelessWidget {
             ),
             // Bottom: footnote.
             const Padding(
-              padding: EdgeInsets.only(bottom: 16, left: 32, right: 32),
+              padding: EdgeInsets.only(bottom: 24, left: 32, right: 32),
               child: _Footnote(),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _Logo extends StatelessWidget {
+  const _Logo();
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      'assets/simi_next_logo.png',
+      height: 80,
+      fit: BoxFit.contain,
     );
   }
 }
@@ -103,7 +124,7 @@ class _StatusBadge extends StatelessWidget {
     Color bg;
     IconData icon;
     if (hasClient) {
-      text = 'Technician connected';
+      text = 'Engineer connected';
       bg = const Color(0xFF42BE65);
       icon = Icons.cast_connected;
     } else if (serverModel.connectStatus < 0) {
@@ -128,12 +149,12 @@ class _StatusBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: Colors.white, size: 28),
+          Icon(icon, color: _kFg, size: 28),
           const SizedBox(width: 12),
           Text(
             text,
             style: const TextStyle(
-              color: Colors.white,
+              color: _kFg,
               fontSize: 22,
               fontWeight: FontWeight.w600,
             ),
@@ -156,7 +177,7 @@ class _Label extends StatelessWidget {
       style: const TextStyle(
         fontSize: 18,
         letterSpacing: 2,
-        color: Color(0xFF8D8D8D),
+        color: _kFgFaint,
         fontWeight: FontWeight.w600,
       ),
     );
@@ -183,7 +204,7 @@ class _BigValue extends StatelessWidget {
           fontWeight: FontWeight.w700,
           letterSpacing: monospace ? 8 : 2,
           fontFamily: monospace ? 'monospace' : null,
-          color: const Color(0xFF161616),
+          color: _kFg,
         ),
       ),
     );
@@ -196,11 +217,12 @@ class _Footnote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Text(
-      'Read the Support ID and Password to your Simi technician.',
+      'Give this code to your Simi Engineer',
       textAlign: TextAlign.center,
       style: TextStyle(
-        fontSize: 18,
-        color: Color(0xFF6F6F6F),
+        fontSize: 22,
+        color: _kFgDim,
+        fontWeight: FontWeight.w500,
       ),
     );
   }

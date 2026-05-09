@@ -54,8 +54,12 @@ class HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF000000),
       appBar: AppBar(
         centerTitle: true,
+        backgroundColor: const Color(0xFF000000),
+        foregroundColor: const Color(0xFFFFFFFF),
+        elevation: 0,
         title: const Text('Simi Next Support'),
         actions: _serverPage.appBarActions,
       ),
