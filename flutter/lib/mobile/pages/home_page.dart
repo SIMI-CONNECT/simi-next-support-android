@@ -47,14 +47,17 @@ class HomePageState extends State<HomePage> {
 
   void initPages() {
     _pages.clear();
-    if (!bind.isIncomingOnly()) {
-      _pages.add(ConnectionPage(
-        appBarActions: [],
-      ));
-    }
-    if (isAndroid && !bind.isOutgoingOnly()) {
+    // Simi Next Support: incoming-only signage surface. The outbound
+    // ConnectionPage (Remote ID input) is never added — technicians
+    // connect TO this device, this device never initiates outbound.
+    // ChatPage is kept as the second tab so the tech can message the
+    // on-site operator during a session.
+    if (isAndroid) {
+      _pages.add(ServerPage());
       _chatPageTabIndex = _pages.length;
-      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
+      _pages.add(ChatPage(type: ChatPageType.mobileMain));
+    } else {
+      _pages.add(ServerPage());
     }
     _pages.add(SettingsPage());
   }
@@ -150,7 +153,7 @@ class HomePageState extends State<HomePage> {
         ],
       );
     }
-    return Text(bind.mainGetAppNameSync());
+    return const Text('Simi Next Support');
   }
 }
 
