@@ -73,17 +73,28 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    // No AppBar — the SIMI Next logo IS the brand mark, and the title
+    // would only repeat the same words below it. Tech access (Set
+    // permanent password, Change ID, etc.) lives in the 3-dot menu
+    // overlaid at the top-right corner with low visual weight.
     return Scaffold(
       backgroundColor: const Color(0xFF000000),
-      appBar: AppBar(
-        centerTitle: true,
-        backgroundColor: const Color(0xFF000000),
-        foregroundColor: const Color(0xFFFFFFFF),
-        elevation: 0,
-        title: const Text('Simi Next Support'),
-        actions: _serverPage.appBarActions,
+      body: Stack(
+        children: [
+          const SignageHomePage(),
+          if (_serverPage.appBarActions.isNotEmpty)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: SafeArea(
+                child: IconTheme(
+                  data: const IconThemeData(color: Color(0x80FFFFFF)),
+                  child: Row(children: _serverPage.appBarActions),
+                ),
+              ),
+            ),
+        ],
       ),
-      body: const SignageHomePage(),
     );
   }
 }

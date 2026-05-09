@@ -107,7 +107,7 @@ class _Logo extends StatelessWidget {
   Widget build(BuildContext context) {
     return Image.asset(
       'assets/simi_next_logo.png',
-      height: 180,
+      height: 280,
       fit: BoxFit.contain,
     );
   }
