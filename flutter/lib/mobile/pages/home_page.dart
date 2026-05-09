@@ -1,14 +1,21 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
 import '../../common.dart';
 import '../../consts.dart';
 import '../../models/platform_model.dart';
+import '../../models/server_model.dart';
 import '../../models/state_model.dart';
 import '../../simi_branding/signage_home_page.dart';
 import 'connection_page.dart';
+
+const _kSupportCredsChannel = MethodChannel('mChannel');
+const _kSupportPasswordChars =
+    'abcdefghijkmnopqrstuvwxyz23456789'; // no 0/o/1/l ambiguity
 
 // Retained so the upstream PageShape contract (referenced indirectly
 // from a few places) still compiles. Concrete pages we no longer
@@ -62,6 +69,14 @@ class HomePageState extends State<HomePage> {
     // launch in case upstream changes the default or the app data was
     // cleared.
     bind.mainSetOption(key: kOptionApproveMode, value: 'password');
+    // Make the on-screen password the permanent one (stable across
+    // service restarts) so the auto-pair worker has a stable credential
+    // to register with the backend. RustDesk's default is rotating
+    // one-time; that's a security win for ad-hoc human-in-the-loop
+    // support but is incompatible with unattended fleet auto-pair.
+    bind.mainSetOption(
+        key: kOptionVerificationMethod, value: kUsePermanentPassword);
+    _ensureSupportCredentials();
     // Upstream's mobile ServerPage starts a 3-second periodic fetchID()
     // poll in its initState; with that tab no longer mounted on the
     // signage layout, the ID readout would stay on the "Generating ..."
@@ -71,6 +86,7 @@ class HomePageState extends State<HomePage> {
     _fetchIdTimer = periodic_immediate(const Duration(seconds: 3), () async {
       await gFFI.serverModel.fetchID();
       await gFFI.serverModel.updatePasswordModel();
+      await _ensureSupportCredentials();
     });
     gFFI.serverModel.checkAndroidPermission();
   }
@@ -79,6 +95,45 @@ class HomePageState extends State<HomePage> {
   void dispose() {
     _fetchIdTimer?.cancel();
     super.dispose();
+  }
+
+  // Ensure a permanent password is set, then bridge {id, password} to
+  // the Kotlin SupportAutoRegisterWorker via the mChannel handler.
+  Future<void> _ensureSupportCredentials() async {
+    // If RustDesk hasn't generated the ID yet, wait — we'll be called
+    // again from the periodic poll below. Accept 9 or 10 digits;
+    // help.simiconnect.com is currently issuing 10-digit IDs.
+    final id = (await bind.mainGetMyId()).trim().replaceAll(' ', '');
+    if (!RegExp(r'^[0-9]{9,10}$').hasMatch(id)) return;
+
+    var password = await bind.mainGetPermanentPassword();
+    if (password.trim().isEmpty) {
+      password = _generateSupportPassword();
+      await bind.mainSetPermanentPassword(password: password);
+      // Read it back to confirm rust persisted it; if not, abort and
+      // try again on the next poll.
+      final readBack = await bind.mainGetPermanentPassword();
+      if (readBack.trim() != password) return;
+      password = readBack;
+    }
+
+    try {
+      await _kSupportCredsChannel.invokeMethod('stamp_support_credentials', {
+        'rustdesk_id': id,
+        'permanent_password': password,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('stamp_support_credentials failed: ${e.message}');
+    }
+  }
+
+  String _generateSupportPassword() {
+    final rng = Random.secure();
+    final buf = StringBuffer();
+    for (var i = 0; i < 10; i++) {
+      buf.write(_kSupportPasswordChars[rng.nextInt(_kSupportPasswordChars.length)]);
+    }
+    return buf.toString();
   }
 
   @override

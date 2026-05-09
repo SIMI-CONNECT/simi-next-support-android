@@ -1,0 +1,74 @@
+plugins {
+    id 'com.android.library'
+    id 'kotlin-android'
+}
+
+// Production values come from CI / build env.  The release.yml workflow sets
+// SUPPORT_BACKEND_BASE_URL and SUPPORT_BACKEND_SUPPORT_PUBKEY; for local dev
+// these can be exported in the shell or passed via -P flags.  Defaults below
+// keep `flutter build apk` working end-to-end without any extra setup.
+def envBackendBaseUrl = System.getenv('SUPPORT_BACKEND_BASE_URL') ?: ''
+def envBackendPubkey  = System.getenv('SUPPORT_BACKEND_SUPPORT_PUBKEY') ?: ''
+def backendBaseUrl = (findProperty('simi.backendBaseUrl') ?: envBackendBaseUrl).toString()
+def backendPubkey  = (findProperty('simi.backendSupportPubkey') ?: envBackendPubkey).toString()
+if (backendBaseUrl.isEmpty()) {
+    backendBaseUrl = 'https://api.simiconnect.com'
+}
+if (backendPubkey.isEmpty()) {
+    // 32-byte sealed-box pubkey emitted by the Plato CT 109 setup script.
+    backendPubkey = 'dNouiXdt05qBo2x7AQhGbOHiUW6AeoIpbyGnweU5K1E='
+}
+
+android {
+    namespace 'com.simiconnect.next.support'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 22
+        targetSdk 33
+        consumerProguardFiles 'consumer-rules.pro'
+
+        buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
+        buildConfigField 'String', 'BACKEND_SUPPORT_PUBKEY', "\"${backendPubkey}\""
+
+        // Library modules don't auto-generate VERSION_NAME / VERSION_CODE
+        // BuildConfig fields the way application modules do.  Mirror the
+        // app's values here so SupportDeviceHeadersInterceptor can stamp
+        // x-app-version / x-app-build identically to the player.
+        def appVersionName = (findProperty('simi.appVersionName') ?: '1.4.6').toString()
+        def appVersionCode = Integer.parseInt((findProperty('simi.appVersionCode') ?: '64').toString())
+        buildConfigField 'String', 'VERSION_NAME', "\"${appVersionName}\""
+        buildConfigField 'int',    'VERSION_CODE', "${appVersionCode}"
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.work:work-runtime-ktx:2.9.0'
+    implementation 'androidx.datastore:datastore-preferences:1.0.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    implementation 'com.squareup.retrofit2:retrofit:2.11.0'
+    implementation 'com.squareup.retrofit2:converter-moshi:2.11.0'
+    implementation 'com.squareup.moshi:moshi:1.15.1'
+    // Reflection-based Kotlin adapter so @JsonClass-annotated data
+    // classes don't require the codegen KSP (which we'd otherwise have
+    // to wire into this AGP-7.3.x project).
+    implementation 'com.squareup.moshi:moshi-kotlin:1.15.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // Sealed-box (curve25519 + xsalsa20-poly1305) for password encryption.
+    implementation 'com.goterl:lazysodium-android:5.1.0@aar'
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+}

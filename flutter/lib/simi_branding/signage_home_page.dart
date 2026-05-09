@@ -14,6 +14,8 @@
 // sees this surface it's already serving — they just read the values
 // to the engineer.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -26,31 +28,71 @@ const Color _kFg = Color(0xFFFFFFFF);
 const Color _kFgDim = Color(0xFFB0B0B0);
 const Color _kFgFaint = Color(0xFF8D8D8D);
 
-class SignageHomePage extends StatelessWidget {
+class SignageHomePage extends StatefulWidget {
   const SignageHomePage({Key? key}) : super(key: key);
+
+  @override
+  State<SignageHomePage> createState() => _SignageHomePageState();
+}
+
+class _SignageHomePageState extends State<SignageHomePage> {
+  String _permanentPwd = '';
+  Timer? _pwdTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshPermanentPwd();
+    _pwdTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _refreshPermanentPwd();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pwdTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshPermanentPwd() async {
+    final p = (await bind.mainGetPermanentPassword()).trim();
+    if (p != _permanentPwd && mounted) {
+      setState(() => _permanentPwd = p);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Consumer<ServerModel>(
-        builder: (context, serverModel, _) => _Body(serverModel: serverModel),
+        builder: (context, serverModel, _) => _Body(
+          serverModel: serverModel,
+          permanentPwd: _permanentPwd,
+        ),
       ),
     );
   }
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.serverModel});
+  const _Body({required this.serverModel, required this.permanentPwd});
   final ServerModel serverModel;
+  final String permanentPwd;
 
   @override
   Widget build(BuildContext context) {
     final hasClient = serverModel.clients.isNotEmpty;
     final id = serverModel.serverId.value.text.trim();
-    final showOneTime = serverModel.approveMode != 'click' &&
-        serverModel.verificationMethod != kUsePermanentPassword;
-    final pwd = !showOneTime ? '••••••' : serverModel.serverPasswd.value.text;
+    // When verification-method == use-permanent-password (which we
+    // pin in HomePageState.initState for the auto-pair flow),
+    // serverModel.serverPasswd.text becomes "-". Show the actual
+    // permanent password instead — that's what the engineer needs.
+    final pwd = permanentPwd.isNotEmpty
+        ? permanentPwd
+        : (serverModel.verificationMethod != kUsePermanentPassword
+            ? serverModel.serverPasswd.value.text
+            : '••••••');
     return Container(
       width: double.infinity,
       height: double.infinity,

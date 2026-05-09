@@ -165,4 +165,10 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib") { version { strictly("1.9.10") } }
     implementation 'com.caverock:androidsvg-aar:1.4'
     implementation "rustls:rustls-platform-verifier:0.1.1"
+
+    // Simi Next Support — auto-pair worker. POSTs the device's RustDesk
+    // ID + (sealed-box encrypted) permanent password to the backend's
+    // /user/device/support-registration endpoint so the operator
+    // dashboard can fetch the credentials without a manual fallback.
+    implementation project(':auto-register')
 }
