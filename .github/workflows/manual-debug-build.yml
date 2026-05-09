@@ -296,6 +296,37 @@ jobs:
             -o flutter/android/app/src/main/jniLibs \
             build --features flutter,hwcodec
 
+      # ------------------------------------------------------------------ #
+      # Rename liblibrustdesk.so -> librustdesk.so and bundle libc++_shared #
+      # (see release.yml for full rationale)                                #
+      # ------------------------------------------------------------------ #
+      - name: Rename rust lib + bundle libc++_shared.so
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_LIB_BASE="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          declare -A ABI_TO_NDK_TRIPLE=(
+            [arm64-v8a]=aarch64-linux-android
+            [armeabi-v7a]=arm-linux-androideabi
+            [x86_64]=x86_64-linux-android
+            [x86]=i686-linux-android
+          )
+          for abi_dir in flutter/android/app/src/main/jniLibs/*/; do
+            abi="$(basename "$abi_dir")"
+            if [[ -f "${abi_dir}liblibrustdesk.so" ]]; then
+              mv "${abi_dir}liblibrustdesk.so" "${abi_dir}librustdesk.so"
+              echo "renamed ${abi}/liblibrustdesk.so -> librustdesk.so"
+            fi
+            triple="${ABI_TO_NDK_TRIPLE[$abi]:-}"
+            if [[ -n "$triple" && -f "${NDK_LIB_BASE}/${triple}/libc++_shared.so" ]]; then
+              cp "${NDK_LIB_BASE}/${triple}/libc++_shared.so" "${abi_dir}"
+              echo "bundled ${abi}/libc++_shared.so"
+            else
+              echo "WARN: libc++_shared.so not found for abi=${abi} triple=${triple}" >&2
+            fi
+          done
+          ls -la flutter/android/app/src/main/jniLibs/*/
+
       - name: flutter build apk --debug
         working-directory: flutter
         shell: bash
