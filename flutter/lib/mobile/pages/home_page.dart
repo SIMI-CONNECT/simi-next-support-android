@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
 import '../../common.dart';
+import '../../consts.dart';
 import '../../models/platform_model.dart';
 import '../../models/state_model.dart';
 import '../../simi_branding/signage_home_page.dart';
@@ -53,6 +54,14 @@ class HomePageState extends State<HomePage> {
         gFFI.serverModel.toggleService();
       }
     });
+    // Force approve-mode = password so an inbound technician connection
+    // is accepted silently as soon as the password matches. Without
+    // this, the operator sees an "Accept session?" dialog on every
+    // connection — the screen is unattended, no one is going to tap it.
+    // Idempotent: rust persists the option, but we re-apply on every
+    // launch in case upstream changes the default or the app data was
+    // cleared.
+    bind.mainSetOption(key: kOptionApproveMode, value: 'password');
     // Upstream's mobile ServerPage starts a 3-second periodic fetchID()
     // poll in its initState; with that tab no longer mounted on the
     // signage layout, the ID readout would stay on the "Generating ..."
@@ -61,6 +70,7 @@ class HomePageState extends State<HomePage> {
     // completes.
     _fetchIdTimer = periodic_immediate(const Duration(seconds: 3), () async {
       await gFFI.serverModel.fetchID();
+      await gFFI.serverModel.updatePasswordModel();
     });
     gFFI.serverModel.checkAndroidPermission();
   }
