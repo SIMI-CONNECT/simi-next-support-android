@@ -251,10 +251,19 @@ class ServiceNotRunningNotification extends StatelessWidget {
                         const TextStyle(fontSize: 12, color: MyTheme.darkGray))
                 .marginOnly(bottom: 8),
             ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
+                icon: const Icon(Icons.play_arrow, size: 32),
                 // Simi Next Support is a closed product — techs are
                 // pre-authorised, not random callers. Skip upstream's
                 // scam-warning dialog and start the service directly.
+                // autofocus + large hit-target make this work cleanly
+                // with a TV remote / DPAD on signage hardware.
+                autofocus: true,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32, vertical: 20),
+                  textStyle: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w600),
+                ),
                 onPressed: serverModel.toggleService,
                 label: Text(translate("Start service")))
           ],
@@ -623,10 +632,10 @@ class PermissionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Larger hit target + visible focus ring for TV remote / DPAD use.
     return SwitchListTile(
-        visualDensity: VisualDensity.compact,
-        contentPadding: EdgeInsets.all(0),
-        title: Text(name),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        title: Text(name, style: const TextStyle(fontSize: 18)),
         value: isOk,
         onChanged: (bool value) {
           onPressed();

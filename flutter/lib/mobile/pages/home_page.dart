@@ -43,22 +43,23 @@ class HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     initPages();
+    // Simi Next Support: closed-product unattended signage. On every
+    // launch, auto-fire the screen-sharing service once the first
+    // frame is up. The Android system MediaProjection consent prompt
+    // still appears on first run; after the operator grants it once,
+    // subsequent launches start without any user action.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!gFFI.serverModel.isStart) {
+        gFFI.serverModel.toggleService();
+      }
+    });
   }
 
   void initPages() {
     _pages.clear();
-    // Simi Next Support: incoming-only signage surface. The outbound
-    // ConnectionPage (Remote ID input) is never added — technicians
-    // connect TO this device, this device never initiates outbound.
-    // ChatPage is kept as the second tab so the tech can message the
-    // on-site operator during a session.
-    if (isAndroid) {
-      _pages.add(ServerPage());
-      _chatPageTabIndex = _pages.length;
-      _pages.add(ChatPage(type: ChatPageType.mobileMain));
-    } else {
-      _pages.add(ServerPage());
-    }
+    // Incoming-only surface: no outbound ConnectionPage, no Chat tab —
+    // techs and operators only need [Share screen, Settings].
+    _pages.add(ServerPage());
     _pages.add(SettingsPage());
   }
 
