@@ -230,6 +230,34 @@ class MainActivity : FlutterActivity() {
                     rdClipboardManager?.syncClipboard(true)
                     result.success(true)
                 }
+                "stamp_support_credentials" -> {
+                    // Dart side passes {rustdesk_id, permanent_password}.
+                    // We write them into the SharedPreferences file
+                    // RustDeskIdentityReader reads from, then nudge
+                    // WorkManager so the auto-register worker re-runs
+                    // against the freshly-stamped values.
+                    val args = call.arguments as? Map<*, *>
+                    val id = args?.get("rustdesk_id") as? String
+                    val pwd = args?.get("permanent_password") as? String
+                    if (id.isNullOrBlank() || pwd.isNullOrBlank()) {
+                        Log.w("SimiSupportStamp", "rejected: id=${id?.take(4)}.. pwd-len=${pwd?.length}")
+                        result.success(false)
+                    } else {
+                        val prefs = getSharedPreferences(
+                            "simi_support_credentials",
+                            MODE_PRIVATE,
+                        )
+                        prefs.edit()
+                            .putString("rustdesk_id", id)
+                            .putString("permanent_password", pwd)
+                            .apply()
+                        Log.i("SimiSupportStamp", "stamped id=$id pwd-len=${pwd.length}; forcing worker re-run")
+                        com.simiconnect.next.support.autoregister
+                            .SupportAutoRegister(applicationContext)
+                            .forceEnqueue()
+                        result.success(true)
+                    }
+                }
                 GET_START_ON_BOOT_OPT -> {
                     val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
                     result.success(prefs.getBoolean(KEY_START_ON_BOOT_OPT, false))
