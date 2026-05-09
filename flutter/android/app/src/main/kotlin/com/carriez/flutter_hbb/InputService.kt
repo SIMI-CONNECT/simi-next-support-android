@@ -711,6 +711,50 @@ class InputService : AccessibilityService() {
 
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // Simi Next Support — closed-product unattended signage.
+        //
+        // Android's MediaProjection (Screen Capture) consent dialog is
+        // owned by system_ui and re-prompts every time the foreground
+        // service starts. On a fleet of attended-by-no-one screens we
+        // need it to dismiss itself. We can't bypass the prompt without
+        // root or device-owner status, but our AccessibilityService
+        // already has window content + gesture privileges, so we look
+        // for the dialog's "Start now" button and click it for the
+        // operator.
+        //
+        // Heuristic: source package is the system UI / mediaprojection
+        // permission activity, and the visible text matches the
+        // localized "start now" affordance.
+        val pkg = event.packageName?.toString() ?: return
+        if (!pkg.contains("systemui") &&
+            !pkg.contains("permissioncontroller") &&
+            pkg != "com.android.systemui" &&
+            pkg != "android") {
+            return
+        }
+        val root = rootInActiveWindow ?: return
+        autoClickProjectionConsent(root)
+    }
+
+    private fun autoClickProjectionConsent(root: AccessibilityNodeInfo) {
+        // The MediaProjection consent dialog's primary button is labelled
+        // "Start now" / "START NOW" in en-US. Match case-insensitively.
+        // We intentionally do NOT click "Cancel" or other dialogs.
+        val targetTexts = arrayOf("start now", "START NOW")
+        for (text in targetTexts) {
+            val matches = root.findAccessibilityNodeInfosByText(text) ?: continue
+            for (node in matches) {
+                val label = node.text?.toString()?.trim()?.lowercase() ?: continue
+                if (label != "start now") continue
+                var clickable: AccessibilityNodeInfo? = node
+                while (clickable != null && !clickable.isClickable) {
+                    clickable = clickable.parent
+                }
+                clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.d(logTag, "auto-clicked MediaProjection consent (Start now)")
+                return
+            }
+        }
     }
 
     override fun onServiceConnected() {
@@ -722,6 +766,14 @@ class InputService : AccessibilityService() {
         } else {
             info.flags = FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
+        // Without setting eventTypes here, setServiceInfo() overwrites
+        // the XML config's accessibilityEventTypes with empty, which
+        // silently disables onAccessibilityEvent. Re-declare them so
+        // we can auto-click the MediaProjection consent dialog.
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        info.notificationTimeout = 50
         setServiceInfo(info)
         fakeEditTextForTextStateCalculation = EditText(this)
         // Size here doesn't matter, we won't show this view.
