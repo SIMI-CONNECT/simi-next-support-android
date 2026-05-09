@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
@@ -37,6 +39,8 @@ class HomePageState extends State<HomePage> {
   bool get isChatPageCurrentTab => false;
   void refreshPages() {} // no-op now; nothing to refresh.
 
+  Timer? _fetchIdTimer;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +53,22 @@ class HomePageState extends State<HomePage> {
         gFFI.serverModel.toggleService();
       }
     });
+    // Upstream's mobile ServerPage starts a 3-second periodic fetchID()
+    // poll in its initState; with that tab no longer mounted on the
+    // signage layout, the ID readout would stay on the "Generating ..."
+    // placeholder forever. Drive the same poll from HomePage so the
+    // SignageHomePage reflects the live ID once the rendezvous handshake
+    // completes.
+    _fetchIdTimer = periodic_immediate(const Duration(seconds: 3), () async {
+      await gFFI.serverModel.fetchID();
+    });
+    gFFI.serverModel.checkAndroidPermission();
+  }
+
+  @override
+  void dispose() {
+    _fetchIdTimer?.cancel();
+    super.dispose();
   }
 
   @override
