@@ -508,7 +508,12 @@ jobs:
         run: |
           set -euo pipefail
           out_dir="flutter/build/app/outputs/flutter-apk"
+          # Sanitize: branch names from workflow_dispatch can contain `/`
+          # (e.g. `fix/foo`), which `cp` then mis-reads as a path separator
+          # and fails with "No such file or directory". For tag pushes
+          # (`v0.1.1` etc.) this is a no-op.
           tag="${GITHUB_REF_NAME:-dev}"
+          tag="${tag//\//-}"
 
           # flutter build apk --release without --split-per-abi produces a
           # single fat APK at app-release.apk. Rename it to include the tag.
