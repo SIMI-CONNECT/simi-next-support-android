@@ -392,6 +392,64 @@ jobs:
             build --release --features flutter,hwcodec
 
       # ------------------------------------------------------------------ #
+      # Rename cargo-ndk output + bundle libc++_shared.so.                   #
+      #                                                                      #
+      # cargo-ndk names the output `liblibrustdesk.so` (Rust crate           #
+      # `librustdesk` → cdylib name `librustdesk` → cargo-ndk prefixes with  #
+      # `lib`, giving `liblibrustdesk.so`). Android's `System.loadLibrary    #
+      # ("rustdesk")` looks for `librustdesk.so`. Without this rename, the   #
+      # APK installs but crashes on launch with                               #
+      #   UnsatisfiedLinkError: dlopen failed: library "librustdesk.so" not  #
+      #   found                                                                #
+      # which was the v0.1.0 (2026-05-07) symptom.                            #
+      #                                                                      #
+      # cargo-ndk also dynamically links libc++_shared.so but doesn't bundle  #
+      # it — Android only ships libc++_shared on debug builds via Gradle's   #
+      # default packaging. Pulling the NDK copy in here makes the release    #
+      # APK self-contained.                                                   #
+      #                                                                      #
+      # Pattern lifted from .github/workflows/playground.yml (upstream).      #
+      # ------------------------------------------------------------------ #
+      - name: Rename librustdesk + bundle libc++_shared.so
+        shell: bash
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          set -euo pipefail
+          jni="flutter/android/app/src/main/jniLibs"
+          # Map ABI → NDK sysroot triple for libc++_shared.so.
+          declare -A triplet=(
+            [arm64-v8a]=aarch64-linux-android
+            [armeabi-v7a]=arm-linux-androideabi
+            [x86_64]=x86_64-linux-android
+            [x86]=i686-linux-android
+          )
+          for abi in arm64-v8a x86_64; do
+            d="$jni/$abi"
+            if [ ! -d "$d" ]; then
+              echo "::error::expected jniLibs dir $d after cargo-ndk; was the build for $abi skipped?"
+              exit 1
+            fi
+            if [ -f "$d/liblibrustdesk.so" ]; then
+              mv -v "$d/liblibrustdesk.so" "$d/librustdesk.so"
+            elif [ -f "$d/librustdesk.so" ]; then
+              echo "$d/librustdesk.so already correctly named, skipping rename"
+            else
+              echo "::error::no liblibrustdesk.so or librustdesk.so in $d"
+              ls -la "$d"
+              exit 1
+            fi
+            cpp="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${triplet[$abi]}/libc++_shared.so"
+            if [ ! -f "$cpp" ]; then
+              echo "::error::libc++_shared.so missing at $cpp"
+              exit 1
+            fi
+            cp -v "$cpp" "$d/libc++_shared.so"
+          done
+          echo "--- final jniLibs layout ---"
+          find "$jni" -type f -name '*.so' -exec ls -la {} \;
+
+      # ------------------------------------------------------------------ #
       # Write key.properties for the build.gradle signing fallback          #
       #                                                                      #
       # `flutter build apk` does NOT forward args after `--` to Gradle as   #

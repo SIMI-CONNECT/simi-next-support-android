@@ -29,6 +29,27 @@ jobs:
         with:
           submodules: recursive
 
+      # The fork's .gitmodules still references libs/hbb_common, but the
+      # actual submodule pointer was removed from the tree when the fork
+      # was created (`git ls-tree HEAD libs/` does NOT include hbb_common).
+      # As a result `submodules: recursive` above is a silent no-op, and
+      # bridge codegen panics with
+      #   failed to read `libs/hbb_common/Cargo.toml`: No such file or directory
+      # because libs/scrap/Cargo.toml has hbb_common = { path = "../hbb_common" }.
+      #
+      # Mirror the explicit-clone fallback that release.yml uses (same
+      # HBB_COMMON_SHA pin: matches upstream rustdesk/rustdesk @ 1.4.6).
+      - name: Init libs/hbb_common
+        shell: bash
+        run: |
+          set -euo pipefail
+          HBB_COMMON_SHA="48c37de3e6c4e399af6f51ca20e8e3e1fd037976"
+          if [ ! -f libs/hbb_common/Cargo.toml ]; then
+            rm -rf libs/hbb_common
+            git clone https://github.com/rustdesk/hbb_common libs/hbb_common
+            (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
+          fi
+
       - name: Install prerequisites
         run: |
           sudo apt-get install ca-certificates -y
