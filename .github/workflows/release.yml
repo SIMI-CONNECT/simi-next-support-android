@@ -111,13 +111,16 @@ jobs:
             git clone https://github.com/rustdesk/hbb_common libs/hbb_common
             (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
           fi
-          # Hard-lock the rendezvous server + pubkey to our Plato
-          # deployment. Upstream's defaults (rs-ny.rustdesk.com /
-          # OeVuKk5n...) would route every device to RustDesk's public
-          # infra and fail the ed25519 key exchange against our hbbs.
+          # Hard-lock rendezvous server + pubkey + APP_NAME for Simi.
+          # Upstream's defaults (rs-ny.rustdesk.com / OeVuKk5n... and
+          # APP_NAME="RustDesk") would (a) route every device to
+          # RustDesk's public infra and fail key exchange against our
+          # hbbs, and (b) display "RustDesk" everywhere in the UI.
           # Done as a post-clone sed because hbb_common lives as a
-          # standalone repo we don't own — we can't carry the edit in
-          # source. Idempotent: the marker comment prevents re-applying.
+          # standalone repo we don't own. Idempotent via marker
+          # comment. Same approach also rewrites APP_NAME because the
+          # Flutter UI reads it via `bind.mainGetAppNameSync()`, which
+          # is wired all over upstream's mobile screens.
           cfg="libs/hbb_common/src/config.rs"
           if ! grep -q "Simi Next Support fork — rendezvous lock" "$cfg"; then
             python3 - <<'PY'
@@ -133,12 +136,20 @@ jobs:
               count=1,
           )
           assert new != s, "rendezvous lock anchor not found"
-          p.write_text(new)
-          print("rendezvous lock applied")
+          # APP_NAME is what the Flutter app-bar shows everywhere.
+          new2 = re.sub(
+              r'pub static ref APP_NAME: RwLock<String> = RwLock::new\("RustDesk"\.to_owned\(\)\);',
+              'pub static ref APP_NAME: RwLock<String> = RwLock::new("Next Support".to_owned());',
+              new,
+              count=1,
+          )
+          assert new2 != new, "APP_NAME anchor not found"
+          p.write_text(new2)
+          print("rendezvous lock + APP_NAME rebrand applied")
           PY
           fi
           echo "--- post-lock check ---"
-          grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY' libs/hbb_common/src/config.rs | head -4
+          grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY|APP_NAME: RwLock' libs/hbb_common/src/config.rs | head -5
 
       # ------------------------------------------------------------------ #
       # Resolve build-config: workflow_dispatch inputs win over secrets.    #
