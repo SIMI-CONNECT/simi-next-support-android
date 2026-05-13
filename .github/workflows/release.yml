@@ -111,6 +111,34 @@ jobs:
             git clone https://github.com/rustdesk/hbb_common libs/hbb_common
             (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
           fi
+          # Hard-lock the rendezvous server + pubkey to our Plato
+          # deployment. Upstream's defaults (rs-ny.rustdesk.com /
+          # OeVuKk5n...) would route every device to RustDesk's public
+          # infra and fail the ed25519 key exchange against our hbbs.
+          # Done as a post-clone sed because hbb_common lives as a
+          # standalone repo we don't own — we can't carry the edit in
+          # source. Idempotent: the marker comment prevents re-applying.
+          cfg="libs/hbb_common/src/config.rs"
+          if ! grep -q "Simi Next Support fork — rendezvous lock" "$cfg"; then
+            python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("libs/hbb_common/src/config.rs")
+          s = p.read_text()
+          new = re.sub(
+              r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[".*?"\];\npub const RS_PUB_KEY: &str = ".*?";',
+              '// Simi Next Support fork — rendezvous lock (injected by release.yml).\n'
+              'pub const RENDEZVOUS_SERVERS: &[&str] = &["help.simiconnect.com"];\n'
+              'pub const RS_PUB_KEY: &str = "1ulqOu5Tzb0gH554xYMU4wuby+IuGctgus+vcSweIyU=";',
+              s,
+              count=1,
+          )
+          assert new != s, "rendezvous lock anchor not found"
+          p.write_text(new)
+          print("rendezvous lock applied")
+          PY
+          fi
+          echo "--- post-lock check ---"
+          grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY' libs/hbb_common/src/config.rs | head -4
 
       # ------------------------------------------------------------------ #
       # Resolve build-config: workflow_dispatch inputs win over secrets.    #
