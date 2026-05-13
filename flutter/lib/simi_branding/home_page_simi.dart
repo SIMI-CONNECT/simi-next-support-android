@@ -16,8 +16,30 @@
 // `patches/0010-home-page-replace-outbound-ui.patch` is a TEMPLATE
 // describing the change in prose.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+
 import 'branding.dart';
+
+// ---- Hidden settings unlock --------------------------------------
+// The branded home page deliberately hides upstream RustDesk's
+// settings drawer so end users can't change the rendezvous server,
+// reset the unattended password, or otherwise drift configuration
+// out of the values we baked in at build time. Field technicians
+// still need access for diagnostics, so we expose a hidden door:
+//
+//   Hold D-pad DOWN for >= 3 seconds → PIN dialog → enter `1820`
+//                                                  → mobile SettingsPage.
+//
+// The PIN is NOT a secret — it gates against accidental discovery,
+// not against a determined attacker. Any tech in the field knows it.
+// Don't rotate this without telling the field-ops team.
+const String _kSettingsPin = '1820';
+const Duration _kDpadHoldDuration = Duration(seconds: 3);
 
 class SimiSupportHomePage extends StatefulWidget {
   const SimiSupportHomePage({super.key});
@@ -28,6 +50,77 @@ class SimiSupportHomePage extends StatefulWidget {
 
 class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
   bool _passwordRevealed = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'simi-support-home');
+  Timer? _dpadHoldTimer;
+  bool _pinDialogOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Grab focus on first frame so the Focus widget's onKeyEvent
+    // actually fires. Without this the page can't see D-pad input
+    // on Android TV / signage devices that don't auto-focus the
+    // body Scaffold.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _dpadHoldTimer?.cancel();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    // Only D-pad DOWN is our trigger; everything else falls through
+    // so the rest of the UI behaves normally.
+    if (event.logicalKey != LogicalKeyboardKey.arrowDown) {
+      return KeyEventResult.ignored;
+    }
+    if (event is KeyDownEvent) {
+      // Start the hold timer on first key-down. Key-repeats on
+      // Android arrive as KeyRepeatEvent, which we ignore — the
+      // timer is the source of truth for "held long enough".
+      _dpadHoldTimer ??= Timer(_kDpadHoldDuration, _onDpadHoldComplete);
+    } else if (event is KeyUpEvent) {
+      // Released before the timer fired → cancel, no dialog.
+      _dpadHoldTimer?.cancel();
+      _dpadHoldTimer = null;
+    }
+    // Consume the event so D-pad DOWN doesn't also scroll/focus-move
+    // any visible widget while the user is holding the unlock combo.
+    return KeyEventResult.handled;
+  }
+
+  void _onDpadHoldComplete() {
+    _dpadHoldTimer = null;
+    if (!mounted || _pinDialogOpen) return;
+    _pinDialogOpen = true;
+    showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => const _PinUnlockDialog(),
+    ).then((entered) {
+      _pinDialogOpen = false;
+      if (!mounted) return;
+      if (entered == _kSettingsPin) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const SettingsPage(),
+          ),
+        );
+      } else if (entered != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Incorrect PIN')),
+        );
+      }
+      // Reclaim focus once the dialog has closed so subsequent
+      // unlock attempts work without the user having to tap.
+      _focusNode.requestFocus();
+    });
+  }
 
   // ---- Upstream API bridges ---------------------------------------
   // TODO(verify): the upstream RustDesk Flutter codebase exposes the
@@ -61,33 +154,102 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: SimiBranding.brandSurface,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Header(),
-              const SizedBox(height: 24),
-              if (_isTechConnected()) const _TechConnectingBanner(),
-              const SizedBox(height: 16),
-              _IdCard(supportId: _readSupportId()),
-              const SizedBox(height: 16),
-              _PasswordCard(
-                password: _readSupportPassword(),
-                revealed: _passwordRevealed,
-                onToggle: () => setState(() {
-                  _passwordRevealed = !_passwordRevealed;
-                }),
-              ),
-              const Spacer(),
-              _Footer(theme: theme),
-            ],
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKey,
+      autofocus: true,
+      child: Scaffold(
+        backgroundColor: SimiBranding.brandSurface,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _Header(),
+                const SizedBox(height: 24),
+                if (_isTechConnected()) const _TechConnectingBanner(),
+                const SizedBox(height: 16),
+                _IdCard(supportId: _readSupportId()),
+                const SizedBox(height: 16),
+                _PasswordCard(
+                  password: _readSupportPassword(),
+                  revealed: _passwordRevealed,
+                  onToggle: () => setState(() {
+                    _passwordRevealed = !_passwordRevealed;
+                  }),
+                ),
+                const Spacer(),
+                _Footer(theme: theme),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+// ---- PIN unlock dialog -------------------------------------------
+// Plain numeric field with auto-focus + auto-submit on Enter. The
+// dialog returns the entered text via `Navigator.pop(value)` so the
+// caller can compare against `_kSettingsPin` without leaking the
+// expected value into this widget's state.
+class _PinUnlockDialog extends StatefulWidget {
+  const _PinUnlockDialog();
+  @override
+  State<_PinUnlockDialog> createState() => _PinUnlockDialogState();
+}
+
+class _PinUnlockDialogState extends State<_PinUnlockDialog> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Technician access'),
+      content: TextField(
+        controller: _controller,
+        focusNode: _focusNode,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        obscureText: true,
+        maxLength: 8,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(
+          labelText: 'PIN',
+          counterText: '',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Unlock'),
+        ),
+      ],
     );
   }
 }

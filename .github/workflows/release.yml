@@ -477,6 +477,50 @@ jobs:
           chmod 600 flutter/android/key.properties
 
       # ------------------------------------------------------------------ #
+      # Write gradle.properties with the simi.* runtime config values.       #
+      #                                                                      #
+      # build.gradle.simi.kts reads these via `project.findProperty(...)`   #
+      # and uses them for buildConfigField + resValue + dart-defines. The   #
+      # previous flow only passed RS_PUB_KEY etc. as `--dart-define`,       #
+      # which is Flutter/Dart-side only — the Gradle side defaulted to     #
+      # `PLACEHOLDER_RS_PUB_KEY`, leading to a release APK whose            #
+      # `R.string.simi_rs_pub_key` was literally `${simiRsPubKey}` and     #
+      # whose `BuildConfig.RS_PUB_KEY` was the placeholder default.         #
+      #                                                                      #
+      # gradle.properties is gitignored at repo root (verify before         #
+      # adding); we write it into flutter/android/ where the build script   #
+      # already lives, and shred at job end via the workflow's natural      #
+      # cleanup.                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Write gradle.properties with simi.* config
+        shell: bash
+        env:
+          RS_PUB_KEY: ${{ steps.cfg.outputs.rs_pub_key }}
+          BACKEND_BASE_URL: ${{ steps.cfg.outputs.backend_base_url }}
+          BACKEND_SUPPORT_PUBKEY: ${{ steps.cfg.outputs.backend_support_pubkey }}
+        run: |
+          set -euo pipefail
+          # Append (don't clobber) so any Flutter-default gradle.properties
+          # the framework wrote during `flutter pub get` is preserved.
+          gp="flutter/android/gradle.properties"
+          touch "$gp"
+          {
+            echo ""
+            echo "# Written by .github/workflows/release.yml — do not commit."
+            echo "simi.rendezvousServer=${RENDEZVOUS_SERVER}"
+            echo "simi.rsPubKey=${RS_PUB_KEY}"
+            echo "simi.apiServer=${API_SERVER}"
+            echo "simi.backendBaseUrl=${BACKEND_BASE_URL}"
+            echo "simi.backendSupportPubkey=${BACKEND_SUPPORT_PUBKEY}"
+          } >> "$gp"
+          chmod 600 "$gp"
+          # Smoke check: confirm placeholder isn't present.
+          if grep -qE 'simi\.rsPubKey=PLACEHOLDER' "$gp"; then
+            echo "::error::rsPubKey wrote as placeholder; secret missing?"
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------ #
       # Signed APK build                                                     #
       # The signingConfigs.release block in app/build.gradle reads the      #
       # four signing values from flutter/android/key.properties (written   #
