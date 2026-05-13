@@ -47,11 +47,16 @@ class HomePageState extends State<HomePage> {
 
   void initPages() {
     _pages.clear();
-    if (!bind.isIncomingOnly()) {
-      _pages.add(ConnectionPage(
-        appBarActions: [],
-      ));
-    }
+    // Simi Next Support fork: hide the outbound `ConnectionPage` (the
+    // "Connect to remote ID" tab). This is a CONTROLLED-only surface —
+    // a technician on the other end connects TO this device, not the
+    // other way around. Upstream RustDesk's `bind.isIncomingOnly()`
+    // flag normally guards this; we hard-disable the page regardless
+    // of that flag so a future config change can't accidentally
+    // re-expose outbound. ServerPage (the ID + password screen) and
+    // SettingsPage stay — those are the only surfaces we want.
+    //
+    // Replaces android-fork-overlay/patches/0010-home-page-replace-outbound-ui.patch.
     if (isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
       _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
