@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+import 'package:flutter_hbb/simi_branding/home_page_simi.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
 import 'package:get/get.dart';
 import '../../common.dart';
@@ -59,7 +60,19 @@ class HomePageState extends State<HomePage> {
     // Replaces android-fork-overlay/patches/0010-home-page-replace-outbound-ui.patch.
     if (isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
-      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
+      // Simi Next Support fork: swap upstream RustDesk's ServerPage for
+      // our branded SimiSupportHomePage. ServerPage is the upstream "your
+      // ID + password, waiting for connections" screen — same role as
+      // SimiSupportHomePage but with RustDesk's blue/white visual style.
+      // The Chat tab stays as-is (upstream feature, useful out-of-band
+      // channel during a support session). PageShape contract: the
+      // ServerPage upstream implementation provides the title + icon
+      // + appBarActions hooks for the bottom-nav scaffold; we need to
+      // implement the same on SimiSupportHomePage too.
+      _pages.addAll([
+        ChatPage(type: ChatPageType.mobileMain),
+        const SimiSupportHomePage(),
+      ]);
     }
     _pages.add(SettingsPage());
   }

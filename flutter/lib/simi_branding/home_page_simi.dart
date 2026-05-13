@@ -20,8 +20,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import 'package:flutter_hbb/common.dart' show gFFI;
+import 'package:flutter_hbb/mobile/pages/home_page.dart' show PageShape;
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+import 'package:flutter_hbb/models/platform_model.dart' show bind;
+import 'package:flutter_hbb/models/server_model.dart' show ServerModel;
 
 import 'branding.dart';
 
@@ -41,7 +46,20 @@ import 'branding.dart';
 const String _kSettingsPin = '1820';
 const Duration _kDpadHoldDuration = Duration(seconds: 3);
 
-class SimiSupportHomePage extends StatefulWidget {
+// Implements upstream's PageShape contract so it can be a member of
+// HomePageState._pages alongside ChatPage / SettingsPage. Title + icon
+// surface in the bottom-nav scaffold; appBarActions is empty because
+// the branded home is deliberately chrome-free (the hidden D-pad
+// unlock is the only way out into Settings).
+class SimiSupportHomePage extends StatefulWidget
+    implements PageShape {
+  @override
+  final String title = 'Next Support';
+  @override
+  final Widget icon = const Icon(Icons.support_agent);
+  @override
+  final List<Widget> appBarActions = const [];
+
   const SimiSupportHomePage({super.key});
 
   @override
@@ -54,6 +72,14 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
   Timer? _dpadHoldTimer;
   bool _pinDialogOpen = false;
 
+  // Live values from the RustDesk core. Both are nullable until the
+  // FFI roundtrip resolves; we surface a "—" / "••••••••" placeholder
+  // until they're in. The polling timer refreshes them every 5s so
+  // the screen stays correct after a password rotation or ID reroll.
+  String? _supportId;
+  String? _supportPassword;
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
@@ -64,10 +90,34 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
+    _loadSupportCreds();
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _loadSupportCreds(),
+    );
+  }
+
+  Future<void> _loadSupportCreds() async {
+    try {
+      final id = await bind.mainGetMyId();
+      final pw = await bind.mainGetPermanentPassword();
+      if (!mounted) return;
+      // Only setState if values actually changed — avoids a needless
+      // rebuild every 5s when nothing's moved.
+      if (id != _supportId || pw != _supportPassword) {
+        setState(() {
+          _supportId = id;
+          _supportPassword = pw;
+        });
+      }
+    } catch (_) {
+      // FFI not ready yet (eg cold-start race). Next tick will retry.
+    }
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _dpadHoldTimer?.cancel();
     _focusNode.dispose();
     super.dispose();
@@ -122,38 +172,36 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
     });
   }
 
-  // ---- Upstream API bridges ---------------------------------------
-  // TODO(verify): the upstream RustDesk Flutter codebase exposes the
-  // device's RustDesk ID via something like
-  // `gFFI.serverModel.serverId` (a ValueNotifier<String>) or via
-  // `bind.mainGetMyId()` (a sync FFI call). The exact call site
-  // lives in `flutter/lib/models/server_model.dart` at PINNED_TAG.
-  // Confirm before wiring; the placeholder below returns a literal.
-  String _readSupportId() {
-    // return gFFI.serverModel.serverId.value;
-    return '---------';
-  }
-
-  // TODO(verify): unattended password is exposed via upstream's
-  // `bind.mainGetPermanentPassword()` or
-  // `gFFI.serverModel.verificationMethod`/`serverPasswd` — verify
-  // against `flutter/lib/models/server_model.dart`.
-  String _readSupportPassword() {
-    // return bind.mainGetPermanentPassword();
-    return '••••••••';
-  }
-
-  // TODO(verify): inbound-session indicator. Upstream tracks active
-  // clients in `gFFI.serverModel.clients` (List<Client>). When
-  // non-empty, a tech is connected.
-  bool _isTechConnected() {
-    // return gFFI.serverModel.clients.isNotEmpty;
-    return false;
-  }
+  // ---- Upstream API bridges (wired against pinned RustDesk 1.4.6) -----
+  //
+  // ID: `bind.mainGetMyId()` is the canonical accessor. It's an FFI
+  //     call that returns the 9-digit RustDesk ID the device registered
+  //     with at hbbs (help.simiconnect.com). We cache the value into
+  //     `_supportId` via the periodic refresh in initState() — calling
+  //     the FFI on every build() would needlessly thrash the bridge.
+  //
+  // Password: `bind.mainGetPermanentPassword()` returns the unattended
+  //     password the RustDesk core generates locally on first launch
+  //     and persists. Rotating it happens server-side (operator pushes
+  //     a `rotate-password` event into hbbs) — the periodic refresh
+  //     picks the new value up within 5s of rotation.
+  //
+  // Tech-connected indicator: `gFFI.serverModel.clients` is a
+  //     ChangeNotifier-backed `List<Client>`. The build() method uses
+  //     `context.watch<ServerModel>()` to rebuild on connect/disconnect
+  //     without us having to manually subscribe.
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Watch the ServerModel so the "Tech is connecting" banner appears
+    // and disappears in real time as inbound sessions open/close. We
+    // pull the model off gFFI rather than expecting a Provider to be
+    // mounted above us — gFFI is the canonical singleton across
+    // upstream RustDesk's mobile flow.
+    final serverModel = context.watch<ServerModel?>() ?? gFFI.serverModel;
+    final techConnected = serverModel.clients.isNotEmpty;
+
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _handleKey,
@@ -168,13 +216,13 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
               children: [
                 _Header(),
                 const SizedBox(height: 24),
-                if (_isTechConnected()) const _TechConnectingBanner(),
+                if (techConnected) const _TechConnectingBanner(),
                 const SizedBox(height: 16),
-                _IdCard(supportId: _readSupportId()),
+                _IdCard(supportId: _supportId ?? '—'),
                 const SizedBox(height: 16),
                 _PasswordCard(
-                  password: _readSupportPassword(),
-                  revealed: _passwordRevealed,
+                  password: _supportPassword ?? '••••••••',
+                  revealed: _passwordRevealed && _supportPassword != null,
                   onToggle: () => setState(() {
                     _passwordRevealed = !_passwordRevealed;
                   }),
