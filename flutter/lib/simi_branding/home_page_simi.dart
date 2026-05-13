@@ -158,7 +158,9 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
       if (entered == _kSettingsPin) {
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => const SettingsPage(),
+            // SettingsPage is non-const — its `title` is `translate("Settings")`,
+            // which is a runtime call — so we can't `const` the constructor here.
+            builder: (_) => SettingsPage(),
           ),
         );
       } else if (entered != null) {
