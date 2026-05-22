@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
+<!--
+  Simi Next Support splash background (light-theme + pre-v21 fallback).
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+  Customer-spec: solid black background with the SIMI Next logo centered.
+  Replaces the upstream RustDesk Flutter default which painted plain
+  @android:color/white (no logo) and produced the "absolute shit" white
+  flash on first launch reported on the Dromana panel (v0.1.3).
+
+  The bitmap below is removed automatically as soon as Flutter draws
+  its first frame; the SimiSupportHomePage's black scaffold then takes
+  over with the same logo.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/simi_splash_background" />
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@drawable/simi_splash_logo" />
+    </item>
 </layer-list>
