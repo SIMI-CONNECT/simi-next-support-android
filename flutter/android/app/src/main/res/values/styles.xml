@@ -1,19 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Simi Next Support theme overrides.
+
+  Upstream RustDesk shipped Theme.Light.NoTitleBar parents here, which
+  produced a flash of white between process-start and Flutter drawing
+  the first frame. Customer feedback on v0.1.3 (Dromana panel) was
+  that the screen "looked wrong" — white background where black +
+  SIMI logo were expected. We override:
+    - LaunchTheme  -> Black.NoTitleBar.Fullscreen (splash window)
+    - NormalTheme  -> Black.NoTitleBar (post-splash window background
+      that sits behind Flutter while it initialises)
+  Both windows have @color/simi_brand_black as their windowBackground
+  so the cross-fade between native splash and Flutter is invisible.
+-->
 <resources>
-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
-    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <!-- Show a splash screen on the activity. Automatically removed when
-             Flutter draws its first frame -->
+    <!-- Theme applied while the process is starting (system-theme = light). -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
         <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
-    <!-- Theme applied to the Android Window as soon as the process has started.
-         This theme determines the color of the Android Window while your
-         Flutter UI initializes, as well as behind your Flutter UI while its
-         running.
-         
-         This Theme is only used starting with V2 of Flutter's Android embedding. -->
-    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+    <!-- Theme applied once Flutter is initialising; sits behind the Flutter UI. -->
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@color/simi_brand_black</item>
     </style>
     <style name="Transparent" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>

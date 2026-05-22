@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+import 'package:flutter_hbb/simi_branding/branding.dart';
 import 'package:flutter_hbb/simi_branding/home_page_simi.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
 import 'package:get/get.dart';
@@ -91,22 +92,32 @@ class HomePageState extends State<HomePage> {
           return false;
         },
         child: Scaffold(
-          // backgroundColor: MyTheme.grayBg,
+          // Simi Next Support fork: pin the scaffold + app bar + bottom
+          // nav to the black brand surface so the SIMI Next first-launch
+          // screen is consistently dark from edge to edge. Without
+          // these the upstream lightTheme paints the AppBar white and
+          // the BottomNavigationBar light-grey, which is what the
+          // Dromana customer saw on v0.1.3 ("absolute shit").
+          backgroundColor: SimiBranding.brandSurface,
           appBar: AppBar(
             centerTitle: true,
+            backgroundColor: SimiBranding.brandSurface,
+            foregroundColor: SimiBranding.brandOnSurface,
+            elevation: 0,
             title: appTitle(),
             actions: _pages.elementAt(_selectedIndex).appBarActions,
           ),
           bottomNavigationBar: BottomNavigationBar(
             key: navigationBarKey,
+            backgroundColor: SimiBranding.brandSurface,
             items: _pages
                 .map((page) =>
                     BottomNavigationBarItem(icon: page.icon, label: page.title))
                 .toList(),
             currentIndex: _selectedIndex,
             type: BottomNavigationBarType.fixed,
-            selectedItemColor: MyTheme.accent, //
-            unselectedItemColor: MyTheme.darkGray,
+            selectedItemColor: SimiBranding.brandPrimary,
+            unselectedItemColor: SimiBranding.brandOnSurfaceFaint,
             onTap: (index) => setState(() {
               // close chat overlay when go chat page
               if (_selectedIndex != index) {

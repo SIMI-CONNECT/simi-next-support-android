@@ -388,18 +388,38 @@ class _PinUnlockDialogState extends State<_PinUnlockDialog> {
 class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Row(
+    // Larger, centred header so the brand mark + name read clearly on
+    // the all-black surface. Logo grows to 96dp because at 48dp the
+    // SIMI Next mark loses readability against the black background on
+    // BDL signage panels (verified Dromana 8022143 v0.1.3 feedback).
+    return Column(
       children: [
-        Image.asset(SimiBranding.logoAsset, width: 48, height: 48),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(SimiBranding.appName,
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-            Text(SimiBranding.tagline,
-                style: TextStyle(fontSize: 13, color: Colors.black54)),
-          ],
+        Image.asset(
+          SimiBranding.logoAsset,
+          width: 96,
+          height: 96,
+          // Pinned to the on-primary white so the mark stays visible
+          // even if the asset itself is rendered with a coloured fill
+          // (no-op for the current white-on-transparent PNG, but
+          // future-proofs swap-in of a dark-fill logo).
+          filterQuality: FilterQuality.medium,
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          SimiBranding.appName,
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w600,
+            color: SimiBranding.brandOnSurface,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          SimiBranding.tagline,
+          style: TextStyle(
+            fontSize: 13,
+            color: SimiBranding.brandOnSurfaceMuted,
+          ),
         ),
       ],
     );
@@ -431,21 +451,32 @@ class _IdCard extends StatelessWidget {
   const _IdCard({required this.supportId});
   @override
   Widget build(BuildContext context) {
+    // Dark-card variant of the upstream Material Card. We force the
+    // colour rather than relying on Theme.of(context).cardColor —
+    // upstream RustDesk's lightTheme sets cardColor to grayBg (light
+    // grey), which would punch a hole in our black surface.
     return Card(
+      color: SimiBranding.brandCardSurface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Your support ID',
-                style: TextStyle(fontSize: 13, color: Colors.black54)),
+                style: TextStyle(
+                    fontSize: 13,
+                    color: SimiBranding.brandOnSurfaceMuted)),
             const SizedBox(height: 4),
             SelectableText(
               supportId,
               style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2),
+                fontSize: 28,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2,
+                color: SimiBranding.brandOnSurface,
+              ),
             ),
           ],
         ),
@@ -464,27 +495,38 @@ class _PasswordCard extends StatelessWidget {
       required this.onToggle});
   @override
   Widget build(BuildContext context) {
+    // See _IdCard for the rationale on forcing card colour.
     return Card(
+      color: SimiBranding.brandCardSurface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: InkWell(
         onTap: onToggle,
+        borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Password (rotate via dashboard)',
-                  style: TextStyle(fontSize: 13, color: Colors.black54)),
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: SimiBranding.brandOnSurfaceMuted)),
               const SizedBox(height: 4),
               Text(
                 revealed ? password : '••••••••',
                 style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2),
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 2,
+                  color: SimiBranding.brandOnSurface,
+                ),
               ),
               const SizedBox(height: 4),
               Text(revealed ? 'Tap to hide' : 'Tap to reveal',
-                  style: const TextStyle(fontSize: 11, color: Colors.black45)),
+                  style: const TextStyle(
+                      fontSize: 11,
+                      color: SimiBranding.brandOnSurfaceFaint)),
             ],
           ),
         ),
@@ -500,13 +542,17 @@ class _Footer extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(SimiBranding.tagline,
-            style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        const Text(SimiBranding.tagline,
+            style: TextStyle(
+                fontSize: 12,
+                color: SimiBranding.brandOnSurfaceMuted)),
         const SizedBox(height: 4),
         // TODO(verify): wire to url_launcher (already an upstream dep)
         // to open SimiBranding.supportHelpUrl externally.
-        Text('Need help? help.simiconnect.com',
-            style: TextStyle(fontSize: 12, color: SimiBranding.brandPrimary)),
+        const Text('Need help? help.simiconnect.com',
+            style: TextStyle(
+                fontSize: 12,
+                color: SimiBranding.brandPrimary)),
       ],
     );
   }

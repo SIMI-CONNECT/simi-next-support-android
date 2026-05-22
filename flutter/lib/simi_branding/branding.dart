@@ -26,14 +26,34 @@ class SimiBranding {
   static const String logoAsset = 'assets/logo/simi-next-support.png';
 
   // ---- Colors ----------------------------------------------------------
-  // TODO(verify): values mirror simi-next-android colors.xml
-  // (simi_primary = #FF0F62FE) as of 2026-05-06. Brand owner sign-off
-  // pending before 1.0. Canonical source: simi-web design tokens.
+  // Customer-spec for the Next Support first-launch screen
+  // (originally promised to the Dromana panel customer):
+  //   solid BLACK background, SIMI Next logo + ID/password centred.
+  // v0.1.3 shipped with `brandSurface = #FFFFFFFF` (white) which made
+  // the screen "look wrong"; this rev flips the home-screen surface to
+  // black and pushes text + helper colors to the light side so they
+  // remain legible.
+  //
+  // Brand-blue accents (primary / primaryDark) keep the simi-next-android
+  // values for cross-fleet consistency. Canonical brand colour source
+  // is the simi-web design-tokens module.
   static const Color brandPrimary = Color(0xFF0F62FE);
   static const Color brandPrimaryDark = Color(0xFF0043CE);
   static const Color brandAccent = Color(0xFF42BE65);
-  static const Color brandSurface = Color(0xFFFFFFFF);
+  // Surface = the scaffold background of the branded home page.
+  static const Color brandSurface = Color(0xFF000000);
   static const Color brandOnPrimary = Color(0xFFFFFFFF);
+  // Foreground tokens for text on the black surface. Kept on this
+  // class so the home-page widget tree doesn't have to inline raw
+  // ARGB literals every time it wants "primary label" or "muted
+  // helper text" against the brand background.
+  static const Color brandOnSurface = Color(0xFFFFFFFF);
+  static const Color brandOnSurfaceMuted = Color(0xB3FFFFFF); // 70% white
+  static const Color brandOnSurfaceFaint = Color(0x80FFFFFF); // 50% white
+  // Slightly-lifted card surface so the ID + password panels read as
+  // distinct affordances against the pure-black background instead of
+  // dissolving into it.
+  static const Color brandCardSurface = Color(0xFF1A1A1A);
 
   // Legacy alias used by other Simi apps; kept for cross-fleet
   // consistency even though Next Support is blue-primary.

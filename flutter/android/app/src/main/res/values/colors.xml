@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="primary">#FF0071FF</color>
+
+    <!--
+      Simi Next Support brand surface (customer-spec).
+
+      Solid black for the launch splash + native Window background, so
+      there is no flash of white before Flutter draws the
+      SimiSupportHomePage. Pulled into:
+        - drawable/launch_background.xml + drawable-v21/launch_background.xml
+        - values/styles.xml + values-night/styles.xml (LaunchTheme + NormalTheme)
+    -->
+    <color name="simi_splash_background">#FF000000</color>
+    <color name="simi_brand_black">#FF000000</color>
 </resources>

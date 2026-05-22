@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+<!--
+  Simi Next Support splash background (Android 5.0+ / dark-theme path).
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+  Customer-spec: solid black background with the SIMI Next logo centered.
+  Replaces the upstream RustDesk Flutter default which painted
+  ?android:colorBackground (system-theme dependent, no logo) and gave
+  the Dromana panel a flash of white or system colour on launch.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/simi_splash_background" />
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@drawable/simi_splash_logo" />
+    </item>
 </layer-list>
