@@ -674,3 +674,235 @@ jobs:
         with:
           files: flutter/build/app/outputs/flutter-apk/simi-next-support-*.apk
           fail_on_unmatched_files: true
+
+  # ====================================================================== #
+  # publish-ota — auto-publish the signed APK to Plato + register catalog
+  #
+  # Replaces the manual post-release dance documented in docs/OTA.md:
+  #   1. scp APK to alexandros (the cluster gateway)
+  #   2. ssh alexandros → run plato-publish-apk.sh (writes
+  #      next-support-arm64-release.{apk,sha256,json} to Plato nginx)
+  #   3. POST /admin/companion-apps so the Fleet UI Install button picks
+  #      it up automatically (sister-agent controller; flagged as
+  #      optional via env-gate while it's rolling out)
+  #
+  # SAFETY: this job is best-effort. If any secret is missing or any step
+  # fails, the GitHub Release still has the signed APK and an operator
+  # can fall back to the manual flow in docs/OTA.md. See
+  # docs/RELEASE_AUTOMATION_SECRETS.md (in the simi-next-support repo)
+  # for secret-provisioning details.
+  # ====================================================================== #
+  publish-ota:
+    name: Publish APK to OTA + catalog
+    needs: build-and-sign
+    if: ${{ github.event_name == 'release' && github.event.inputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Best-effort: do not break the release if OTA publish fails.
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    env:
+      OTA_PUBLISH_HOST: ${{ secrets.OTA_PUBLISH_HOST }}
+      OTA_PUBLISH_USER: ${{ secrets.OTA_PUBLISH_USER }}
+      OTA_PUBLISH_KEY: ${{ secrets.PLATO_PUBLISH_SSH_KEY }}
+      BACKEND_ADMIN_JWT: ${{ secrets.BACKEND_ADMIN_JWT }}
+      # Backend base URL is reused across builds; pull from the same
+      # secret build-and-sign uses so a single rotation covers both.
+      BACKEND_BASE_URL: ${{ secrets.SUPPORT_BACKEND_BASE_URL }}
+      APP_ID: com.simiconnect.next.support
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # Gate: skip cleanly if the OTA secrets aren't provisioned yet.       #
+      # First operator to add PLATO_PUBLISH_SSH_KEY flips this on.          #
+      # ------------------------------------------------------------------ #
+      - name: Check OTA publish prerequisites
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -z "${OTA_PUBLISH_HOST:-}" ] && missing+=(OTA_PUBLISH_HOST)
+          [ -z "${OTA_PUBLISH_USER:-}" ] && missing+=(OTA_PUBLISH_USER)
+          [ -z "${OTA_PUBLISH_KEY:-}"  ] && missing+=(PLATO_PUBLISH_SSH_KEY)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::warning::OTA auto-publish skipped — missing secret(s): ${missing[*]}. Falling back to manual flow (docs/OTA.md)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ------------------------------------------------------------------ #
+      # Download the just-attached APK from the GitHub Release.             #
+      # Prefer the arm64 split if present; fall back to the fat APK.        #
+      # ------------------------------------------------------------------ #
+      - name: Download signed APK from GitHub Release
+        if: steps.gate.outputs.ready == 'true'
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p apk-dl
+          # Try the arm64 split first (matches the file name plato-publish-apk.sh
+          # ultimately writes: next-support-arm64-release.apk).
+          if gh release download "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern 'simi-next-support-*-arm64-v8a.apk' \
+              --dir apk-dl 2>/dev/null; then
+            apk="$(ls apk-dl/simi-next-support-*-arm64-v8a.apk | head -n1)"
+          else
+            # Fat APK fallback — single-file build (current default).
+            gh release download "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern 'simi-next-support-*.apk' \
+              --dir apk-dl
+            apk="$(ls apk-dl/simi-next-support-*.apk | grep -v -- '-arm64-v8a\|-x86_64' | head -n1)"
+            if [ -z "${apk:-}" ]; then
+              # If only a split exists for some reason, just take the first APK.
+              apk="$(ls apk-dl/*.apk | head -n1)"
+            fi
+          fi
+          if [ ! -f "$apk" ]; then
+            echo "::error::No APK downloaded from release ${RELEASE_TAG}"
+            exit 1
+          fi
+          echo "Picked: $apk"
+          echo "apk_path=$apk" >> "$GITHUB_OUTPUT"
+          # Verifiable sha256 for the catalog payload.
+          sha="$(sha256sum "$apk" | awk '{print $1}')"
+          echo "apk_sha256=$sha" >> "$GITHUB_OUTPUT"
+          size="$(stat -c '%s' "$apk")"
+          echo "apk_size=$size" >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------ #
+      # Configure SSH (restricted releaser@alexandros key).                  #
+      # ------------------------------------------------------------------ #
+      - name: Set up SSH key
+        if: steps.gate.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${OTA_PUBLISH_KEY}" > ~/.ssh/ota_publish
+          chmod 600 ~/.ssh/ota_publish
+          # Pin the host key on first contact via known_hosts. We can't
+          # ship a fingerprint here (operator-rotatable), so use
+          # accept-new on the first connect and reuse the captured key
+          # for subsequent steps in this job.
+          : > ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -t ed25519,rsa "${OTA_PUBLISH_HOST}" \
+            >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 600 ~/.ssh/known_hosts
+
+      # ------------------------------------------------------------------ #
+      # SCP to alexandros + invoke plato-publish-apk.sh.                    #
+      # The releaser@ user is provisioned with a forced-command sudoers    #
+      # entry; see docs/RELEASE_AUTOMATION_SECRETS.md.                      #
+      # ------------------------------------------------------------------ #
+      - name: SCP APK to publish host
+        if: steps.gate.outputs.ready == 'true'
+        id: scp
+        shell: bash
+        env:
+          APK_PATH: ${{ steps.download.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          # Use the release tag for traceability in /tmp on alexandros.
+          remote="/tmp/next-support-${RELEASE_TAG}.apk"
+          scp -i ~/.ssh/ota_publish \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=accept-new \
+              "$APK_PATH" \
+              "${OTA_PUBLISH_USER}@${OTA_PUBLISH_HOST}:${remote}"
+          echo "remote_path=$remote" >> "$GITHUB_OUTPUT"
+
+      - name: Run plato-publish-apk.sh on alexandros
+        if: steps.gate.outputs.ready == 'true'
+        shell: bash
+        env:
+          REMOTE_APK: ${{ steps.scp.outputs.remote_path }}
+        run: |
+          set -euo pipefail
+          # plato-publish-apk.sh lives on alexandros (/usr/local/bin/) per
+          # the provisioning runbook. The releaser@ user is granted a
+          # NOPASSWD sudo entry restricted to that exact script path.
+          ssh -i ~/.ssh/ota_publish \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=accept-new \
+              "${OTA_PUBLISH_USER}@${OTA_PUBLISH_HOST}" \
+              "sudo /usr/local/bin/plato-publish-apk.sh '${REMOTE_APK}'"
+
+      # ------------------------------------------------------------------ #
+      # Register the catalog row so the Fleet UI Install button serves      #
+      # this build automatically. Blocked until the sister-agent              #
+      # /admin/companion-apps controller deploys to simi-vm; gate on        #
+      # BACKEND_ADMIN_JWT so workflow stays green pre-deploy.                #
+      # ------------------------------------------------------------------ #
+      - name: Register catalog row (POST /admin/companion-apps)
+        if: steps.gate.outputs.ready == 'true' && env.BACKEND_ADMIN_JWT != '' && env.BACKEND_BASE_URL != ''
+        shell: bash
+        env:
+          APK_SHA256: ${{ steps.download.outputs.apk_sha256 }}
+          APK_SIZE: ${{ steps.download.outputs.apk_size }}
+        run: |
+          set -euo pipefail
+          # Strip a leading "v" from tag names like v0.1.4 to match the
+          # versionName the APK actually advertises.
+          version_name="${RELEASE_TAG#v}"
+          apk_url="https://help.simiconnect.com/apk/next-support-arm64-release.apk"
+          payload=$(cat <<JSON
+          {
+            "app_id": "${APP_ID}",
+            "version_name": "${version_name}",
+            "release_tag": "${RELEASE_TAG}",
+            "apk_url": "${apk_url}",
+            "apk_sha256": "${APK_SHA256}",
+            "apk_size_bytes": ${APK_SIZE},
+            "state": "published",
+            "source": "github-actions"
+          }
+          JSON
+          )
+          # Use --fail-with-body so non-2xx surfaces the controller's
+          # error message in the workflow log. Tolerate 409 (row already
+          # exists for this tag) — re-runs of the same release should be
+          # idempotent.
+          http_code=$(curl -sS \
+            -o /tmp/catalog.body \
+            -w '%{http_code}' \
+            -X POST "${BACKEND_BASE_URL%/}/admin/companion-apps" \
+            -H "Authorization: Bearer ${BACKEND_ADMIN_JWT}" \
+            -H 'Content-Type: application/json' \
+            --data "$payload")
+          echo "POST /admin/companion-apps -> HTTP ${http_code}"
+          cat /tmp/catalog.body || true
+          echo
+          case "$http_code" in
+            2??) echo "catalog row created" ;;
+            409) echo "::notice::catalog row already exists for ${RELEASE_TAG} (HTTP 409) — idempotent no-op" ;;
+            404) echo "::warning::/admin/companion-apps returned 404 — controller not deployed yet; OTA file is published but catalog row must be added manually" ;;
+            *)   echo "::error::catalog POST failed (HTTP ${http_code})"; exit 1 ;;
+          esac
+
+      - name: Catalog registration skipped (no JWT)
+        if: steps.gate.outputs.ready == 'true' && (env.BACKEND_ADMIN_JWT == '' || env.BACKEND_BASE_URL == '')
+        shell: bash
+        run: |
+          echo "::warning::Skipping catalog POST — BACKEND_ADMIN_JWT or SUPPORT_BACKEND_BASE_URL not set. APK is live at https://help.simiconnect.com/apk/next-support-arm64-release.apk; add the companion_app_version row manually until the secret is provisioned."
+
+      # ------------------------------------------------------------------ #
+      # Best-effort cleanup. The SSH key is on a tmpfs runner that's        #
+      # destroyed at job end, but explicit zero-out keeps the audit trail   #
+      # cleaner if anyone pokes at the runner mid-job.                       #
+      # ------------------------------------------------------------------ #
+      - name: Shred SSH key
+        if: always() && steps.gate.outputs.ready == 'true'
+        shell: bash
+        run: |
+          rm -f ~/.ssh/ota_publish ~/.ssh/known_hosts || true
