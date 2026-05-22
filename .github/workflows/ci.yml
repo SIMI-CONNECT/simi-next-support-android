@@ -65,7 +65,12 @@ jobs:
   #       command: test
   #       args: --locked
 
+  # Simi fork: disabled — this job builds upstream rustdesk's x86_64-linux-gnu
+  # binary, which the Android-only fork does not ship. release.yml is the
+  # canonical shipping workflow for this repo. Kept for reference / future
+  # re-enable if the fork ever ships a desktop variant.
   build:
+    if: false
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
     strategy:
