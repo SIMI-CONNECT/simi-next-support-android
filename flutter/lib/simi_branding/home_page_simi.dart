@@ -17,18 +17,37 @@
 // describing the change in prose.
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:flutter_hbb/common.dart' show gFFI;
+import 'package:flutter_hbb/consts.dart'
+    show kOptionApproveMode, kOptionVerificationMethod;
 import 'package:flutter_hbb/mobile/pages/home_page.dart' show PageShape;
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/platform_model.dart' show bind;
-import 'package:flutter_hbb/models/server_model.dart' show ServerModel;
+import 'package:flutter_hbb/models/server_model.dart'
+    show ServerModel, kUsePermanentPassword;
 
 import 'branding.dart';
+
+// Auto-pair bridge into Kotlin: HomePageState pushes the
+// {rustdesk_id, permanent_password} pair through this MethodChannel
+// to MainActivity.stamp_support_credentials, which writes them into
+// the simi_support_credentials SharedPreferences and forces the
+// SupportAutoRegisterWorker to re-run with the fresh fingerprint.
+// Channel name must match MainActivity's FLUTTER_METHOD_CHANNEL_TAG.
+const MethodChannel _kSupportCredsChannel = MethodChannel('mChannel');
+
+// Password alphabet for first-time permanent-password generation.
+// 32 chars, no 0/o/O/1/l/I to keep on-screen readable for the field
+// engineer reading off the device LCD. Length 10 → ~50 bits entropy,
+// plenty for an unattended-fleet credential that can be rotated from
+// the dashboard.
+const String _kSupportPasswordChars = 'abcdefghijkmnopqrstuvwxyz23456789';
 
 // ---- Hidden settings unlock --------------------------------------
 // The branded home page deliberately hides upstream RustDesk's
@@ -90,6 +109,18 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
+    // Pin RustDesk into the unattended-pairing posture we need for
+    // auto-registration:
+    //   - approve-mode = password → inbound sessions are auto-accepted
+    //     on password match, no operator tap required.
+    //   - verification-method = use-permanent-password → password is
+    //     stable across service restarts so the dashboard can fetch
+    //     it once and re-use it.
+    // Both options are persisted by rust, but we re-apply on every
+    // launch so a stale app-data state can't drift us off-config.
+    bind.mainSetOption(key: kOptionApproveMode, value: 'password');
+    bind.mainSetOption(
+        key: kOptionVerificationMethod, value: kUsePermanentPassword);
     _loadSupportCreds();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -110,9 +141,59 @@ class _SimiSupportHomePageState extends State<SimiSupportHomePage> {
           _supportPassword = pw;
         });
       }
+      // Bridge the freshest {id, password} pair into the Kotlin
+      // SupportAutoRegisterWorker via the mChannel handler. The
+      // worker dedupes on a (rustdesk_id, password) fingerprint and
+      // uses ExistingWorkPolicy.KEEP, so calling this every 5s is a
+      // no-op once the device is registered.
+      await _ensureSupportCredentials();
     } catch (_) {
       // FFI not ready yet (eg cold-start race). Next tick will retry.
     }
+  }
+
+  // Ensures a permanent password exists locally, then pushes the
+  // {id, password} pair across the mChannel to Kotlin. Idempotent
+  // and safe to call on every poll — _loadSupportCreds drives it.
+  Future<void> _ensureSupportCredentials() async {
+    // If RustDesk hasn't generated the ID yet (cold start before the
+    // rendezvous handshake completes), wait — the next 5s tick will
+    // retry. Accept 9 or 10 digits; help.simiconnect.com is currently
+    // issuing 10-digit IDs.
+    final id = (await bind.mainGetMyId()).trim().replaceAll(' ', '');
+    if (!RegExp(r'^[0-9]{9,10}$').hasMatch(id)) return;
+
+    var password = await bind.mainGetPermanentPassword();
+    if (password.trim().isEmpty) {
+      password = _generateSupportPassword();
+      await bind.mainSetPermanentPassword(password: password);
+      // Read back to confirm rust persisted it; if not, abort and
+      // try again on the next poll. Without this guard a transient
+      // FFI failure would silently send a password the device can't
+      // actually use to authenticate inbound sessions.
+      final readBack = await bind.mainGetPermanentPassword();
+      if (readBack.trim() != password) return;
+      password = readBack;
+    }
+
+    try {
+      await _kSupportCredsChannel.invokeMethod('stamp_support_credentials', {
+        'rustdesk_id': id,
+        'permanent_password': password,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('stamp_support_credentials failed: ${e.message}');
+    }
+  }
+
+  String _generateSupportPassword() {
+    final rng = Random.secure();
+    final buf = StringBuffer();
+    for (var i = 0; i < 10; i++) {
+      buf.write(
+          _kSupportPasswordChars[rng.nextInt(_kSupportPasswordChars.length)]);
+    }
+    return buf.toString();
   }
 
   @override
