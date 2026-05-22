@@ -28,9 +28,20 @@
 //
 // All four runtime values are exposed two ways:
 //   1. BuildConfig.<NAME>            — for Kotlin / Java code
-//   2. manifestPlaceholders["<key>"] — for AndroidManifest <meta-data>
-//                                       and for string resources
-//                                       (simi-config.xml uses these)
+//   2. resValue("string", ...)       — for code that reads
+//                                       R.string.simi_* (and for the
+//                                       Dart layer when it does the same
+//                                       via the Android resource bridge).
+//
+// History note (2026-05-13): we used to ALSO write these into
+// `manifestPlaceholders[…]` with the assumption that those substitute
+// `${simi*}` tokens inside `res/values/simi-config.xml`. They don't —
+// manifest placeholders are scoped to `AndroidManifest.xml` only.
+// Result: v0.1.0 / v0.1.1-pre shipped with `${simiRsPubKey}` literally
+// stored in the string resource, and the runtime pairing flow couldn't
+// find a usable key. Replacing those calls with `resValue` is the fix.
+// `simi-config.xml` was deleted in the same commit because it would
+// conflict with the synthetic resources `resValue` generates.
 
 import com.android.build.gradle.AppExtension
 
@@ -55,14 +66,30 @@ extensions.configure<AppExtension>("android") {
         // (via patches/0002-rendezvous-key-from-buildconfig.patch) from
         // the Dart bridge layer through --dart-define mirrors injected
         // by the Flutter wrapper.
-        buildConfigField("String", "SIMI_RENDEZVOUS_SERVER", "\"$simiRendezvousServer\"")
-        buildConfigField("String", "SIMI_RS_PUB_KEY",        "\"$simiRsPubKey\"")
-        buildConfigField("String", "SIMI_API_SERVER",        "\"$simiApiServer\"")
-        buildConfigField("String", "SIMI_BACKEND_BASE_URL",  "\"$simiBackendBaseUrl\"")
+        //
+        // Field naming: stay UN-prefixed (`BACKEND_BASE_URL`, not
+        // `SIMI_BACKEND_BASE_URL`) so the existing auto-register Kotlin
+        // call site `BuildConfig.BACKEND_BASE_URL` resolves without an
+        // import-rename across the support code.
+        buildConfigField("String", "RENDEZVOUS_SERVER", "\"$simiRendezvousServer\"")
+        buildConfigField("String", "RS_PUB_KEY",        "\"$simiRsPubKey\"")
+        buildConfigField("String", "API_SERVER",        "\"$simiApiServer\"")
+        buildConfigField("String", "BACKEND_BASE_URL",  "\"$simiBackendBaseUrl\"")
 
-        // Manifest placeholders — back the values referenced from
-        // simi-config.xml as ${simiRendezvousServer} etc., and from
-        // AndroidManifest.xml <meta-data android:value="${...}"/>.
+        // String resources — populated via resValue so anything that
+        // reads `R.string.simi_*` (notably the Dart layer's resource
+        // bridge in the rendezvous-key bake-in patch) gets a real
+        // value, not a literal `${simiRsPubKey}` placeholder. This
+        // replaces the prior `manifestPlaceholders` approach, which
+        // ONLY substitutes tokens inside AndroidManifest.xml — not
+        // inside res/values/*.xml.
+        resValue("string", "simi_rendezvous_server", simiRendezvousServer)
+        resValue("string", "simi_rs_pub_key",        simiRsPubKey)
+        resValue("string", "simi_api_server",        simiApiServer)
+        resValue("string", "simi_backend_base_url",  simiBackendBaseUrl)
+
+        // AndroidManifest.xml still uses ${simi*} for any <meta-data>
+        // entries, so we keep these for the manifest path.
         manifestPlaceholders["simiRendezvousServer"] = simiRendezvousServer
         manifestPlaceholders["simiRsPubKey"]         = simiRsPubKey
         manifestPlaceholders["simiApiServer"]        = simiApiServer
@@ -85,3 +112,22 @@ project.extensions.extraProperties.set(
         "SIMI_BACKEND_BASE_URL=$simiBackendBaseUrl",
     ).joinToString(",")
 )
+
+// Fail-fast if a release build is being made with placeholder values
+// (would re-introduce the v0.1.0 / v0.1.1-pre runtime-pairing breakage).
+// Local debug builds keep the placeholders so contributors can compile
+// without secrets; only `assembleRelease` / `bundleRelease` enforces.
+gradle.taskGraph.whenReady {
+    val isRelease = allTasks.any { it.name.contains("Release", ignoreCase = true) }
+    if (isRelease) {
+        val bad = mutableListOf<String>()
+        if (simiRsPubKey == "PLACEHOLDER_RS_PUB_KEY")       bad += "simi.rsPubKey"
+        if (simiBackendBaseUrl == "https://api.simiconnect.example") bad += "simi.backendBaseUrl"
+        if (bad.isNotEmpty()) {
+            throw GradleException(
+                "Refusing to build release with placeholder values for: ${bad.joinToString()}. " +
+                "Pass them via gradle.properties or `-P` (release.yml writes them from secrets)."
+            )
+        }
+    }
+}

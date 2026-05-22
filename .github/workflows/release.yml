@@ -111,6 +111,45 @@ jobs:
             git clone https://github.com/rustdesk/hbb_common libs/hbb_common
             (cd libs/hbb_common && git checkout "$HBB_COMMON_SHA")
           fi
+          # Hard-lock rendezvous server + pubkey + APP_NAME for Simi.
+          # Upstream's defaults (rs-ny.rustdesk.com / OeVuKk5n... and
+          # APP_NAME="RustDesk") would (a) route every device to
+          # RustDesk's public infra and fail key exchange against our
+          # hbbs, and (b) display "RustDesk" everywhere in the UI.
+          # Done as a post-clone sed because hbb_common lives as a
+          # standalone repo we don't own. Idempotent via marker
+          # comment. Same approach also rewrites APP_NAME because the
+          # Flutter UI reads it via `bind.mainGetAppNameSync()`, which
+          # is wired all over upstream's mobile screens.
+          cfg="libs/hbb_common/src/config.rs"
+          if ! grep -q "Simi Next Support fork — rendezvous lock" "$cfg"; then
+            python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("libs/hbb_common/src/config.rs")
+          s = p.read_text()
+          new = re.sub(
+              r'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[".*?"\];\npub const RS_PUB_KEY: &str = ".*?";',
+              '// Simi Next Support fork — rendezvous lock (injected by release.yml).\n'
+              'pub const RENDEZVOUS_SERVERS: &[&str] = &["help.simiconnect.com"];\n'
+              'pub const RS_PUB_KEY: &str = "1ulqOu5Tzb0gH554xYMU4wuby+IuGctgus+vcSweIyU=";',
+              s,
+              count=1,
+          )
+          assert new != s, "rendezvous lock anchor not found"
+          # APP_NAME is what the Flutter app-bar shows everywhere.
+          new2 = re.sub(
+              r'pub static ref APP_NAME: RwLock<String> = RwLock::new\("RustDesk"\.to_owned\(\)\);',
+              'pub static ref APP_NAME: RwLock<String> = RwLock::new("Next Support".to_owned());',
+              new,
+              count=1,
+          )
+          assert new2 != new, "APP_NAME anchor not found"
+          p.write_text(new2)
+          print("rendezvous lock + APP_NAME rebrand applied")
+          PY
+          fi
+          echo "--- post-lock check ---"
+          grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY|APP_NAME: RwLock' libs/hbb_common/src/config.rs | head -5
 
       # ------------------------------------------------------------------ #
       # Resolve build-config: workflow_dispatch inputs win over secrets.    #
@@ -392,6 +431,64 @@ jobs:
             build --release --features flutter,hwcodec
 
       # ------------------------------------------------------------------ #
+      # Rename cargo-ndk output + bundle libc++_shared.so.                   #
+      #                                                                      #
+      # cargo-ndk names the output `liblibrustdesk.so` (Rust crate           #
+      # `librustdesk` → cdylib name `librustdesk` → cargo-ndk prefixes with  #
+      # `lib`, giving `liblibrustdesk.so`). Android's `System.loadLibrary    #
+      # ("rustdesk")` looks for `librustdesk.so`. Without this rename, the   #
+      # APK installs but crashes on launch with                               #
+      #   UnsatisfiedLinkError: dlopen failed: library "librustdesk.so" not  #
+      #   found                                                                #
+      # which was the v0.1.0 (2026-05-07) symptom.                            #
+      #                                                                      #
+      # cargo-ndk also dynamically links libc++_shared.so but doesn't bundle  #
+      # it — Android only ships libc++_shared on debug builds via Gradle's   #
+      # default packaging. Pulling the NDK copy in here makes the release    #
+      # APK self-contained.                                                   #
+      #                                                                      #
+      # Pattern lifted from .github/workflows/playground.yml (upstream).      #
+      # ------------------------------------------------------------------ #
+      - name: Rename librustdesk + bundle libc++_shared.so
+        shell: bash
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          set -euo pipefail
+          jni="flutter/android/app/src/main/jniLibs"
+          # Map ABI → NDK sysroot triple for libc++_shared.so.
+          declare -A triplet=(
+            [arm64-v8a]=aarch64-linux-android
+            [armeabi-v7a]=arm-linux-androideabi
+            [x86_64]=x86_64-linux-android
+            [x86]=i686-linux-android
+          )
+          for abi in arm64-v8a x86_64; do
+            d="$jni/$abi"
+            if [ ! -d "$d" ]; then
+              echo "::error::expected jniLibs dir $d after cargo-ndk; was the build for $abi skipped?"
+              exit 1
+            fi
+            if [ -f "$d/liblibrustdesk.so" ]; then
+              mv -v "$d/liblibrustdesk.so" "$d/librustdesk.so"
+            elif [ -f "$d/librustdesk.so" ]; then
+              echo "$d/librustdesk.so already correctly named, skipping rename"
+            else
+              echo "::error::no liblibrustdesk.so or librustdesk.so in $d"
+              ls -la "$d"
+              exit 1
+            fi
+            cpp="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${triplet[$abi]}/libc++_shared.so"
+            if [ ! -f "$cpp" ]; then
+              echo "::error::libc++_shared.so missing at $cpp"
+              exit 1
+            fi
+            cp -v "$cpp" "$d/libc++_shared.so"
+          done
+          echo "--- final jniLibs layout ---"
+          find "$jni" -type f -name '*.so' -exec ls -la {} \;
+
+      # ------------------------------------------------------------------ #
       # Write key.properties for the build.gradle signing fallback          #
       #                                                                      #
       # `flutter build apk` does NOT forward args after `--` to Gradle as   #
@@ -417,6 +514,50 @@ jobs:
           keyPassword=${KEY_PASSWORD}
           EOF
           chmod 600 flutter/android/key.properties
+
+      # ------------------------------------------------------------------ #
+      # Write gradle.properties with the simi.* runtime config values.       #
+      #                                                                      #
+      # build.gradle.simi.kts reads these via `project.findProperty(...)`   #
+      # and uses them for buildConfigField + resValue + dart-defines. The   #
+      # previous flow only passed RS_PUB_KEY etc. as `--dart-define`,       #
+      # which is Flutter/Dart-side only — the Gradle side defaulted to     #
+      # `PLACEHOLDER_RS_PUB_KEY`, leading to a release APK whose            #
+      # `R.string.simi_rs_pub_key` was literally `${simiRsPubKey}` and     #
+      # whose `BuildConfig.RS_PUB_KEY` was the placeholder default.         #
+      #                                                                      #
+      # gradle.properties is gitignored at repo root (verify before         #
+      # adding); we write it into flutter/android/ where the build script   #
+      # already lives, and shred at job end via the workflow's natural      #
+      # cleanup.                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Write gradle.properties with simi.* config
+        shell: bash
+        env:
+          RS_PUB_KEY: ${{ steps.cfg.outputs.rs_pub_key }}
+          BACKEND_BASE_URL: ${{ steps.cfg.outputs.backend_base_url }}
+          BACKEND_SUPPORT_PUBKEY: ${{ steps.cfg.outputs.backend_support_pubkey }}
+        run: |
+          set -euo pipefail
+          # Append (don't clobber) so any Flutter-default gradle.properties
+          # the framework wrote during `flutter pub get` is preserved.
+          gp="flutter/android/gradle.properties"
+          touch "$gp"
+          {
+            echo ""
+            echo "# Written by .github/workflows/release.yml — do not commit."
+            echo "simi.rendezvousServer=${RENDEZVOUS_SERVER}"
+            echo "simi.rsPubKey=${RS_PUB_KEY}"
+            echo "simi.apiServer=${API_SERVER}"
+            echo "simi.backendBaseUrl=${BACKEND_BASE_URL}"
+            echo "simi.backendSupportPubkey=${BACKEND_SUPPORT_PUBKEY}"
+          } >> "$gp"
+          chmod 600 "$gp"
+          # Smoke check: confirm placeholder isn't present.
+          if grep -qE 'simi\.rsPubKey=PLACEHOLDER' "$gp"; then
+            echo "::error::rsPubKey wrote as placeholder; secret missing?"
+            exit 1
+          fi
 
       # ------------------------------------------------------------------ #
       # Signed APK build                                                     #
@@ -450,7 +591,12 @@ jobs:
         run: |
           set -euo pipefail
           out_dir="flutter/build/app/outputs/flutter-apk"
+          # Sanitize: branch names from workflow_dispatch can contain `/`
+          # (e.g. `fix/foo`), which `cp` then mis-reads as a path separator
+          # and fails with "No such file or directory". For tag pushes
+          # (`v0.1.1` etc.) this is a no-op.
           tag="${GITHUB_REF_NAME:-dev}"
+          tag="${tag//\//-}"
 
           # flutter build apk --release without --split-per-abi produces a
           # single fat APK at app-release.apk. Rename it to include the tag.
