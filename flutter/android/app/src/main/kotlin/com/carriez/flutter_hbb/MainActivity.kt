@@ -116,11 +116,12 @@ class MainActivity : FlutterActivity() {
      * dialog in MainService.
      */
     private fun startSupportServiceUnattended() {
+        if (!supportCredentialsStamped(this)) {
+            Log.i(logTag, "support credentials not stamped yet; deferring relay join")
+            return
+        }
         try {
-            val svc = Intent(this, MainService::class.java).apply {
-                action = ACT_INIT_MEDIA_PROJECTION_AND_SERVICE
-                putExtra(EXT_INIT_FROM_BOOT, true)
-            }
+            val svc = unattendedServiceIntent(this)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(svc)
             } else {
@@ -282,6 +283,10 @@ class MainActivity : FlutterActivity() {
                         com.simiconnect.next.support.autoregister
                             .SupportAutoRegister(applicationContext)
                             .forceEnqueue()
+                        // Credentials now exist, so the relay join is safe. Do it
+                        // here rather than making a freshly provisioned panel wait
+                        // for its next reboot.
+                        startSupportServiceUnattended()
                         result.success(true)
                     }
                 }
