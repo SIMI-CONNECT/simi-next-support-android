@@ -197,6 +197,12 @@ class MainService : Service() {
     companion object {
         private var _isReady = false // media permission ready status
         private var _isStart = false // screen capture start status
+
+    // True when this service was started without a person present (boot, or an
+    // MDM-driven launch). Screen-capture consent cannot be answered in that
+    // situation and the dialog would cover live content, so every path that
+    // would raise it is suppressed.
+    private var startedHeadless = false
         private var _isAudioStart = false // audio capture start status
         val isReady: Boolean
             get() = _isReady
@@ -330,6 +336,7 @@ class MainService : Service() {
             createForegroundNotification()
 
             if (intent.getBooleanExtra(EXT_INIT_FROM_BOOT, false)) {
+                startedHeadless = true
                 FFI.startService()
             }
             Log.d(logTag, "service starting: ${startId}:${Thread.currentThread()}")
@@ -349,8 +356,8 @@ class MainService : Service() {
                 // consent cannot be pre-granted before Android 14 - so it would never
                 // be dismissable remotely. Screen capture is requested only on a real
                 // user-initiated start.
-                if (intent.getBooleanExtra(EXT_INIT_FROM_BOOT, false)) {
-                    Log.d(logTag, "unattended init (EXT_INIT_FROM_BOOT); skipping media projection request")
+                if (startedHeadless) {
+                    Log.d(logTag, "unattended start; not requesting media projection")
                 } else {
                     Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
                     requestMediaProjection()
@@ -557,9 +564,15 @@ class MainService : Service() {
                 )
             }
         } catch (e: SecurityException) {
-            Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");
+            Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException")
             // This initiates a prompt dialog for the user to confirm screen projection.
-            requestMediaProjection()
+            // On an unattended panel there is nobody to confirm it and it would sit
+            // on top of live content, so the capture is simply abandoned instead.
+            if (startedHeadless) {
+                Log.w(logTag, "unattended start; abandoning capture rather than prompting")
+            } else {
+                requestMediaProjection()
+            }
         }
     }
 
