@@ -102,6 +102,33 @@ class MainActivity : FlutterActivity() {
             _rdClipboardManager = RdClipboardManager(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             FFI.setClipboardManager(_rdClipboardManager!!)
         }
+        startSupportServiceUnattended()
+    }
+
+    /**
+     * Bring the rendezvous connection up without anyone touching the panel.
+     *
+     * Installing the APK does not reboot the display, so relying on BootReceiver
+     * alone would leave the device unregistered until its next restart. The MDM
+     * launches this activity explicitly, which puts the process in the foreground
+     * and makes starting a foreground service legal. EXT_INIT_FROM_BOOT both
+     * triggers FFI.startService() and suppresses the screen-capture consent
+     * dialog in MainService.
+     */
+    private fun startSupportServiceUnattended() {
+        try {
+            val svc = Intent(this, MainService::class.java).apply {
+                action = ACT_INIT_MEDIA_PROJECTION_AND_SERVICE
+                putExtra(EXT_INIT_FROM_BOOT, true)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc)
+            } else {
+                startService(svc)
+            }
+        } catch (e: Throwable) {
+            Log.w(logTag, "unattended service start failed: $e")
+        }
     }
 
     override fun onDestroy() {
