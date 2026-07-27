@@ -342,8 +342,19 @@ class MainService : Service() {
                 checkMediaPermission()
                 _isReady = true
             } ?: let {
-                Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
-                requestMediaProjection()
+                // Unattended start (boot / MDM launch): FFI.startService() above has
+                // already registered us with the rendezvous relay. Asking for screen
+                // capture here would throw the system consent dialog onto a
+                // customer-facing signage panel on every boot, and MediaProjection
+                // consent cannot be pre-granted before Android 14 - so it would never
+                // be dismissable remotely. Screen capture is requested only on a real
+                // user-initiated start.
+                if (intent.getBooleanExtra(EXT_INIT_FROM_BOOT, false)) {
+                    Log.d(logTag, "unattended init (EXT_INIT_FROM_BOOT); skipping media projection request")
+                } else {
+                    Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
+                    requestMediaProjection()
+                }
             }
         }
         return START_NOT_STICKY // don't use sticky (auto restart), the new service (from auto restart) will lose control
